@@ -1,0 +1,10 @@
+export { parseDiscoveryConfiguration } from "./config";
+export { createConnectorRegistry } from "./connectors";
+export { SOURCE_CATALOG } from "./catalog";
+export { runDiscoveryBatch } from "./engine";
+export { expandDiscoveryGraph } from "./graph";
+export { resolveIdentity } from "./identity";
+export { scoreCandidate, DEFAULT_SCORING_WEIGHTS } from "./scoring";
+export { updateTasteWeights } from "./taste";
+export type * from "./repository";
+export type * from "./types";
