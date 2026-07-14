@@ -26,7 +26,53 @@ type PageDefinition = {
   affiliationSelector?: string;
   eventName?: string;
   eventType?: EventType;
+  occurredAt?: string;
 };
+
+export function parseStructuredPlacement(value: string): number | undefined {
+  const normalized = sanitizePlainText(value, 100).trim();
+  const match = normalized.match(
+    /^(?:rank(?:ed)?\s*)?(?:#|=|t(?:ie)?(?:d)?\s*)?(\d{1,6})(?:st|nd|rd|th)?(?:\s*\(?(?:tie|tied)\)?)?$/iu,
+  );
+  if (!match) return undefined;
+  const placement = Number(match[1]);
+  return Number.isSafeInteger(placement) && placement > 0 ? placement : undefined;
+}
+
+export function normalizeStructuredRecognition(value: string): string | undefined {
+  const normalized = sanitizePlainText(value, 100).trim().toLocaleLowerCase("en-US");
+  if (!normalized) return undefined;
+  const exact: Record<string, string> = {
+    b: "bronze medal",
+    bronze: "bronze medal",
+    "bronze medal": "bronze medal",
+    g: "gold medal",
+    gold: "gold medal",
+    "gold medal": "gold medal",
+    hm: "honorable mention",
+    "honorable mention": "honorable mention",
+    s: "silver medal",
+    silver: "silver medal",
+    "silver medal": "silver medal",
+  };
+  return exact[normalized];
+}
+
+export function structuredResultTitle(input: {
+  name: string;
+  eventName: string;
+  placement?: number;
+  recognition?: string;
+}) {
+  if (input.recognition) {
+    const article = /^(?:[aeiou]|honor)/iu.test(input.recognition) ? "an" : "a";
+    return `${input.name} received ${article} ${input.recognition} at ${input.eventName}`;
+  }
+  if (input.placement) {
+    return `${input.name} placed ${input.placement} in ${input.eventName}`;
+  }
+  return `${input.name} was recognized in ${input.eventName}`;
+}
 
 function pageDefinitions(value: unknown): PageDefinition[] {
   if (!Array.isArray(value)) return [];
@@ -43,6 +89,7 @@ function pageDefinitions(value: unknown): PageDefinition[] {
       rankSelector: sanitizePlainText(item.rankSelector, 300) || undefined,
       affiliationSelector: sanitizePlainText(item.affiliationSelector, 300) || undefined,
       eventName: sanitizePlainText(item.eventName, 300) || undefined,
+      occurredAt: sanitizePlainText(item.occurredAt, 50) || undefined,
       eventType: [
         "competition_result",
         "hackathon_result",
@@ -72,6 +119,7 @@ export class StructuredResultsConnector implements DiscoveryConnector {
   async discover(context: ConnectorRunContext): Promise<ConnectorRunResult> {
     const pages = pageDefinitions(context.settings.options?.pages);
     const maxItems = Math.min(500, context.settings.maxItems ?? 120);
+    const perPageLimit = Math.max(1, Math.ceil(maxItems / Math.max(1, pages.length)));
     const events: DiscoveryEvent[] = [];
     const warnings: string[] = [];
 
@@ -87,7 +135,7 @@ export class StructuredResultsConnector implements DiscoveryConnector {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const $ = cheerio.load(await response.text());
         $(page.itemSelector)
-          .slice(0, maxItems)
+          .slice(0, perPageLimit)
           .each((index, element) => {
             const item = $(element);
             const name = sanitizePlainText(item.find(page.nameSelector).first().text(), 200);
@@ -106,15 +154,24 @@ export class StructuredResultsConnector implements DiscoveryConnector {
             const rankText = page.rankSelector
               ? sanitizePlainText(item.find(page.rankSelector).first().text(), 100)
               : "";
-            const rank = Number(rankText.replace(/[^0-9.]/g, ""));
+            const rank = parseStructuredPlacement(rankText);
             const affiliation = page.affiliationSelector
               ? sanitizePlainText(item.find(page.affiliationSelector).first().text(), 300)
               : "";
-            const eventName =
-              page.eventName ||
-              (page.titleSelector
-                ? sanitizePlainText(item.find(page.titleSelector).first().text(), 300)
-                : "competition result");
+            const resultText = page.titleSelector
+              ? sanitizePlainText(item.find(page.titleSelector).first().text(), 300)
+              : "";
+            const eventName = page.eventName || resultText || "competition result";
+            const recognition = page.eventName
+              ? normalizeStructuredRecognition(resultText)
+              : undefined;
+            const sourceDescription = page.descriptionSelector
+              ? sanitizePlainText(item.find(page.descriptionSelector).first().text(), 2_000)
+              : "";
+            const resultDetails = [
+              recognition ? `Official result: ${recognition}` : "",
+              rank ? `listed at rank ${rank}` : "",
+            ].filter(Boolean);
             const person: PersonObservation = {
               displayName: name,
               identities: [
@@ -133,20 +190,26 @@ export class StructuredResultsConnector implements DiscoveryConnector {
                 source: this.kind,
                 sourceExternalId: stableHash(page.url, name, eventName, rankText || index),
                 type: page.eventType ?? this.defaultEventType,
-                title: rankText
-                  ? `${name} placed ${rankText} in ${eventName}`
-                  : `${name} was recognized in ${eventName}`,
-                description: page.descriptionSelector
-                  ? sanitizePlainText(item.find(page.descriptionSelector).first().text(), 2_000)
-                  : undefined,
-                occurredAt: page.dateSelector
-                  ? item.find(page.dateSelector).first().attr("datetime") ||
-                    item.find(page.dateSelector).first().text()
-                  : undefined,
+                title: structuredResultTitle({ name, eventName, placement: rank, recognition }),
+                description:
+                  [sourceDescription, resultDetails.join(", ")].filter(Boolean).join(". ") ||
+                  undefined,
+                occurredAt:
+                  (page.dateSelector
+                    ? item.find(page.dateSelector).first().attr("datetime") ||
+                      item.find(page.dateSelector).first().text()
+                    : undefined) || page.occurredAt,
                 sourceUrl,
                 person,
-                metrics: Number.isFinite(rank) && rank > 0 ? { rank: asNumber(rank) } : undefined,
-                tags: [page.eventType ?? this.defaultEventType],
+                metrics: rank ? { rank: asNumber(rank) } : undefined,
+                tags: [
+                  page.eventType ?? this.defaultEventType,
+                  ...(recognition ? [recognition.replace(/\s+/gu, "-")] : []),
+                ],
+                raw: {
+                  ...(rankText ? { placementText: rankText } : {}),
+                  ...(resultText ? { resultText } : {}),
+                },
                 confidence: sourceUrl !== page.url ? 0.78 : 0.68,
                 now: context.now,
               }),

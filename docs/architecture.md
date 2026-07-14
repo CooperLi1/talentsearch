@@ -114,6 +114,10 @@ A common name with no corroborating identifier must produce `review`, not `match
 
 Broad discovery remains cheap. More expensive enrichment runs only when a candidate crosses a configurable preliminary threshold, appears near a trusted graph seed, or is explicitly watched by a reviewer.
 
+Enrichment is iterative within and across bounded passes. A provider profile can reveal a candidate-owned site; that site can reveal a same-handle GitHub, GitLab, Hacker News, X, or LinkedIn profile; and each newly verified provider can run its native enrichment before public web lookup executes. Every material new event, identity hypothesis, alias, affiliation, or website advances a durable research revision. If that happens during an active pass, completion records only the claimed revision and immediately requeues the candidate for the new lead. Unverified links remain review hypotheses and never cause automatic identity merging.
+
+The backlog uses an explicit next-attempt timestamp rather than observation time. Candidates with fewer independent publishers and higher preliminary scores run first. A useful pass returns after seven days; an empty pass backs off for 30 days. Every attempt is recorded even when it finds nothing, so one hard-to-research handle cannot consume every scheduled batch.
+
 An enrichment budget limits:
 
 - connector requests per candidate and per origin;
@@ -129,12 +133,13 @@ This staged approach spends effort where it improves a decision without turning 
 The baseline score is interpretable:
 
 ```text
-30% achievement quality
-20% trajectory velocity
-15% project originality
-15% trusted-network proximity
-10% evidence diversity
-10% earlyness
+25% achievement quality
+17% trajectory velocity
+14% project originality
+15% technical complexity
+12% trusted-network proximity
+8% evidence diversity
+9% earlyness
 - confidence and staleness penalties
 ```
 
@@ -177,20 +182,22 @@ LLM output is generated from a bounded evidence packet, not an unconstrained web
 - confidence and unresolved identity notes;
 - cited source IDs.
 
-Reject output whose citations do not map to the evidence packet. Store prompt/model versions and regenerate summaries when material evidence changes.
+Reject output whose citations do not map to the evidence packet. Candidate briefs require a resolved identity and at least one substantive event, while the review queue and email additionally require both stored evidence and displayed facts from two publishers. Later model calls receive connector-extracted excerpts, never an earlier model-written event summary. Every candidate bullet then passes a separate deterministic-temperature factual check; missing verdicts, unsupported clauses, stale policy versions, and specialist shorthand fail closed. A durable worker claims a bounded batch, stores the evidence fingerprint, prompt-policy version, and model after success, and regenerates only when material evidence or the brief policy changes. Display surfaces require the current policy version, so stale copy becomes pending rather than remaining visible during a rewrite backlog. Evidence packets are interleaved by the citation host so a search result pointing back to GitHub cannot masquerade as a second publisher. Queue, search, and email use the same completed brief contract; deterministic connector text is never presented as a completed brief.
+
+Repository scoring persists its metrics and tags with the event so scheduled rescoring sees the same inspectable evidence as the ingestion pass. GitHub enrichment excludes forks before complexity analysis or attribution. Project count contributes only a small capped prior; technical depth, measured outcomes, achievements, and independent evidence carry the ranking.
 
 Embeddings represent an evidence-grounded candidate search document containing projects, skills, research topics, achievements, career-stage evidence, and recent events. Use the same model and dimensionality for indexing and querying. Hybrid search combines vector similarity with structured filters and, where available, lexical ranking. The LLM may reformulate a user query or summarize results; it does not bypass database authorization or similarity thresholds.
 
 ### Weekly delivery
 
-The weekly cron creates or reuses a digest keyed to the Monday 15:00 UTC window, persists the exact ranked candidate email payload on its digest items, reloads that snapshot before every delivery attempt, resolves the currently active recipients for that attempt, and calls `sendWeeklyDigest` from `lib/email`. The email layer:
+The 15-minute digest dispatcher checks the saved weekdays, UTC send time, and preparation lead. A preparation invocation creates or reuses the digest keyed to the future delivery window and freezes the exact ranked candidate payload. The send invocation uses that same key, reloads the snapshot, resolves the currently active recipients, and calls `sendWeeklyDigest` from `lib/email`. The email layer:
 
 - de-duplicates and deterministically sorts recipients;
 - sends one isolated message per recipient in Resend batches of at most 100;
 - lazily initializes Resend only in explicit send mode;
 - uses deterministic batch idempotency keys;
 - returns typed preview, skipped, sent, partial-failure information;
-- includes source links, why-now, earlyness, and confidence in the template.
+- includes concise factual candidate bullets and their source links.
 
 The cron persists the returned provider IDs and status. A unique digest key plus an atomic sending claim prevents concurrent weekly invocations from both sending. Failed or stale-sending attempts are automatically retryable for at most 23 hours; after that the claim fails closed because Resend idempotency expires after 24 hours. Database delivery state remains the durable duplicate-send guard.
 

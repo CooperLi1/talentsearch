@@ -204,7 +204,12 @@ export async function sendWeeklyDigest(
 
   const resend = getResendClient()
   if (!resend) {
-    return { ...base, status: "preview", reason: "missing-api-key" }
+    return {
+      ...base,
+      status: "failed",
+      error: inputError("A valid RESEND_API_KEY is required in send mode"),
+      batches: [],
+    }
   }
 
   const from = process.env.RESEND_FROM?.trim()

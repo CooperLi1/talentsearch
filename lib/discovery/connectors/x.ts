@@ -54,6 +54,10 @@ function headers(): HeadersInit {
   return { authorization: `Bearer ${token}` };
 }
 
+function xDataUseApproved() {
+  return process.env.X_DATA_USE_APPROVED === "true";
+}
+
 function userPerson(user: XUser): PersonObservation {
   return {
     displayName: sanitizePlainText(user.name || user.username, 200),
@@ -111,12 +115,15 @@ export class XConnector implements DiscoveryConnector {
     if (!process.env.X_BEARER_TOKEN) {
       return { events: [], warnings: ["X disabled: official API bearer token is not configured"] };
     }
+    if (!xDataUseApproved()) {
+      return { events: [], warnings: ["X disabled: approved data use is not confirmed"] };
+    }
     const maxItems = Math.min(100, Math.max(10, context.settings.maxItems ?? 30));
-    const queries = context.settings.queries?.filter(Boolean) ?? [];
+    const queries = (context.settings.queries?.filter(Boolean) ?? []).slice(0, 8);
     if (!queries.length) return { events: [], warnings: ["X enabled but no search queries are configured"] };
     const events = [];
     const warnings: string[] = [];
-    for (const query of queries.slice(0, 5)) {
+    for (const query of queries) {
       const url = new URL("https://api.x.com/2/tweets/search/recent");
       url.searchParams.set("query", `${query} -is:retweet`);
       url.searchParams.set("max_results", String(Math.max(10, Math.ceil(maxItems / queries.length))));
@@ -151,7 +158,7 @@ export class XConnector implements DiscoveryConnector {
   }
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
-    if (!process.env.X_BEARER_TOKEN) return null;
+    if (!process.env.X_BEARER_TOKEN || !xDataUseApproved()) return null;
     const identity = context.person.identities.find(
       (item) => item.provider === "x" && (item.username || item.externalId),
     );
@@ -190,7 +197,7 @@ export class XConnector implements DiscoveryConnector {
   }
 
   async expandGraph(context: ConnectorEnrichmentContext): Promise<GraphEdge[]> {
-    if (!process.env.X_BEARER_TOKEN) return [];
+    if (!process.env.X_BEARER_TOKEN || !xDataUseApproved()) return [];
     const source = context.person.identities.find((item) => item.provider === "x");
     if (!source) return [];
     const maxItems = Math.min(100, context.settings.maxItems ?? 25);

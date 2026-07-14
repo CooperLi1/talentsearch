@@ -6,8 +6,16 @@
       "schedule": "30 12 * * *"
     },
     {
+      "path": "/api/cron/enrichment",
+      "schedule": "7,17,27,37,47,57 * * * *"
+    },
+    {
+      "path": "/api/cron/briefs",
+      "schedule": "12,42 * * * *"
+    },
+    {
       "path": "/api/cron/weekly-digest",
-      "schedule": "0 15 * * 1"
+      "schedule": "*/15 * * * *"
     }
   ]
 }

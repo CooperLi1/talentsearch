@@ -1,27 +1,84 @@
 "use client";
 
 import { CandidateActions } from "@/components/candidates/candidate-actions";
+import type { OperatorBriefFact } from "@/lib/candidates/operator-brief";
+import {
+  buildSearchFacetOptions,
+  candidateMatchesFacet,
+  type SearchFacetOption,
+} from "@/lib/search/facets";
 import { ArrowUpRight, Search, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 
 export type PeopleCandidateView = {
   confidence: number;
+  contactRoute: { label: string; url: string } | null;
   domains: string[];
-  evidence: string | null;
+  eventTypes: string[];
+  facts: OperatorBriefFact[];
   id: string;
   identityWarning: string | null;
   initials: string;
   location: string;
   name: string;
-  recency: string;
   score: number;
   slug: string;
+  sourceLabels: string[];
   stage: string;
   status: string;
   thesis: string;
-  whyNow: string;
 };
+
+type SelectedFacets = {
+  domains: string[];
+  eventTypes: string[];
+  locations: string[];
+  sources: string[];
+  stages: string[];
+  statuses: string[];
+};
+
+const EMPTY_FACETS: SelectedFacets = {
+  domains: [],
+  eventTypes: [],
+  locations: [],
+  sources: [],
+  stages: [],
+  statuses: [],
+};
+
+function FilterGroup({
+  options,
+  selected,
+  title,
+  onToggle,
+}: {
+  options: SearchFacetOption[];
+  selected: string[];
+  title: string;
+  onToggle: (value: string) => void;
+}) {
+  if (!options.length) return null;
+  return (
+    <div className="filter-group">
+      <h2 className="filter-title">{title}</h2>
+      <div className="filter-options">
+        {options.map((option) => (
+          <label className="filter-option" key={option.value}>
+            <input
+              checked={selected.includes(option.value)}
+              onChange={() => onToggle(option.value)}
+              type="checkbox"
+            />
+            <span>{option.label}</span>
+            <small>{option.count}</small>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function PeopleSearch({
   candidates,
@@ -32,21 +89,15 @@ export function PeopleSearch({
 }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
-  const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
-  const [selectedStages, setSelectedStages] = useState<string[]>([]);
+  const [selected, setSelected] = useState<SelectedFacets>(EMPTY_FACETS);
   const [searching, setSearching] = useState(false);
   const [remoteOrder, setRemoteOrder] = useState<string[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  const domainOptions = useMemo(
-    () =>
-      Array.from(new Set(candidates.flatMap((candidate) => candidate.domains)))
-        .sort()
-        .slice(0, 10),
-    [candidates],
-  );
-  const stageOptions = useMemo(
-    () => Array.from(new Set(candidates.map((candidate) => candidate.stage))).sort(),
-    [candidates],
+  const facets = useMemo(() => buildSearchFacetOptions(candidates), [candidates]);
+  const selectedCount = Object.values(selected).reduce(
+    (total, values) => total + values.length,
+    0,
   );
 
   const results = useMemo(() => {
@@ -55,8 +106,7 @@ export function PeopleSearch({
       const haystack = [
         candidate.name,
         candidate.thesis,
-        candidate.whyNow,
-        candidate.evidence ?? "",
+        ...candidate.facts.map((fact) => fact.text),
         candidate.location,
         candidate.stage,
         ...candidate.domains,
@@ -64,32 +114,32 @@ export function PeopleSearch({
         .join(" ")
         .toLowerCase();
       const queryMatch =
-        !normalized ||
+        !normalized || remoteOrder !== null ||
         normalized.split(/\s+/).every((term) => haystack.includes(term));
       const domainMatch =
-        selectedDomains.length === 0 ||
-        selectedDomains.some((domain) => candidate.domains.includes(domain));
-      const stageMatch =
-        selectedStages.length === 0 || selectedStages.includes(candidate.stage);
-      return queryMatch && domainMatch && stageMatch;
+        candidateMatchesFacet(candidate.domains, selected.domains);
+      const eventTypeMatch = candidateMatchesFacet(candidate.eventTypes, selected.eventTypes);
+      const locationMatch = candidateMatchesFacet([candidate.location], selected.locations);
+      const sourceMatch = candidateMatchesFacet(candidate.sourceLabels, selected.sources);
+      const stageMatch = candidateMatchesFacet([candidate.stage], selected.stages);
+      const statusMatch = candidateMatchesFacet([candidate.status], selected.statuses);
+      return queryMatch && domainMatch && eventTypeMatch && locationMatch && sourceMatch && stageMatch && statusMatch;
     });
 
     if (!remoteOrder) return filtered.sort((a, b) => b.score - a.score);
     const rank = new Map(remoteOrder.map((slug, index) => [slug, index]));
-    return filtered.sort(
-      (a, b) => (rank.get(a.slug) ?? 999) - (rank.get(b.slug) ?? 999),
-    );
-  }, [candidates, remoteOrder, selectedDomains, selectedStages, submittedQuery]);
+    return filtered
+      .filter((candidate) => rank.has(candidate.slug))
+      .sort((a, b) => (rank.get(a.slug) ?? 999) - (rank.get(b.slug) ?? 999));
+  }, [candidates, remoteOrder, selected, submittedQuery]);
 
-  function toggleValue(
-    value: string,
-    setter: React.Dispatch<React.SetStateAction<string[]>>,
-  ) {
-    setter((current) =>
-      current.includes(value)
-        ? current.filter((item) => item !== value)
-        : [...current, value],
-    );
+  function toggleValue(key: keyof SelectedFacets, value: string) {
+    setSelected((current) => ({
+      ...current,
+      [key]: current[key].includes(value)
+        ? current[key].filter((item) => item !== value)
+        : [...current[key], value],
+    }));
   }
 
   async function submitSearch(event: FormEvent<HTMLFormElement>) {
@@ -97,18 +147,29 @@ export function PeopleSearch({
     setSubmittedQuery(query);
     setSearching(true);
     setRemoteOrder(null);
+    setSearchError(null);
 
     try {
       const response = await fetch("/api/search", {
         body: JSON.stringify({
-          filters: { careerStages: selectedStages, skills: selectedDomains },
+          filters: {
+            careerStages: selected.stages,
+            eventTypes: selected.eventTypes,
+            locations: selected.locations,
+            skills: selected.domains,
+            sources: selected.sources,
+            statuses: selected.statuses,
+          },
           limit: 50,
           query,
         }),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setSearchError("Search could not run. The visible filters still work on loaded records.");
+        return;
+      }
       const payload = (await response.json()) as {
         results?: Array<{ candidate?: { slug?: string }; slug?: string }>;
       };
@@ -116,6 +177,8 @@ export function PeopleSearch({
         ?.map((result) => result.slug ?? result.candidate?.slug)
         .filter((slug): slug is string => Boolean(slug));
       if (slugs) setRemoteOrder(slugs);
+    } catch {
+      setSearchError("Search could not run. The visible filters still work on loaded records.");
     } finally {
       setSearching(false);
     }
@@ -127,11 +190,10 @@ export function PeopleSearch({
         <div className="filter-heading">
           <SlidersHorizontal aria-hidden="true" />
           <span>Filters</span>
-          {(selectedDomains.length > 0 || selectedStages.length > 0) && (
+          {selectedCount > 0 && (
             <button
               onClick={() => {
-                setSelectedDomains([]);
-                setSelectedStages([]);
+                setSelected(EMPTY_FACETS);
               }}
               type="button"
             >
@@ -140,41 +202,12 @@ export function PeopleSearch({
           )}
         </div>
 
-        {domainOptions.length ? (
-          <div className="filter-group">
-            <h2 className="filter-title">Focus area</h2>
-            <div className="filter-options">
-              {domainOptions.map((domain) => (
-                <label className="filter-option" key={domain}>
-                  <input
-                    checked={selectedDomains.includes(domain)}
-                    onChange={() => toggleValue(domain, setSelectedDomains)}
-                    type="checkbox"
-                  />
-                  {domain}
-                </label>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {stageOptions.length ? (
-          <div className="filter-group">
-            <h2 className="filter-title">Stage</h2>
-            <div className="filter-options">
-              {stageOptions.map((stage) => (
-                <label className="filter-option" key={stage}>
-                  <input
-                    checked={selectedStages.includes(stage)}
-                    onChange={() => toggleValue(stage, setSelectedStages)}
-                    type="checkbox"
-                  />
-                  {stage}
-                </label>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        <FilterGroup options={facets.eventTypes} selected={selected.eventTypes} title="Signal" onToggle={(value) => toggleValue("eventTypes", value)} />
+        <FilterGroup options={facets.sources} selected={selected.sources} title="Source" onToggle={(value) => toggleValue("sources", value)} />
+        <FilterGroup options={facets.domains} selected={selected.domains} title="Focus area" onToggle={(value) => toggleValue("domains", value)} />
+        <FilterGroup options={facets.stages} selected={selected.stages} title="Stage" onToggle={(value) => toggleValue("stages", value)} />
+        <FilterGroup options={facets.locations} selected={selected.locations} title="Location" onToggle={(value) => toggleValue("locations", value)} />
+        <FilterGroup options={facets.statuses} selected={selected.statuses} title="Review status" onToggle={(value) => toggleValue("statuses", value)} />
       </aside>
 
       <section className="people-main" aria-label="People search results">
@@ -195,6 +228,7 @@ export function PeopleSearch({
             {searching ? "Searching" : "Search"}
           </button>
         </form>
+        {searchError ? <p className="people-search-error" role="status">{searchError}</p> : null}
 
         <div className="people-status">
           <span>{results.length} {results.length === 1 ? "person" : "people"}</span>
@@ -219,14 +253,40 @@ export function PeopleSearch({
                     {[candidate.stage, candidate.location].filter(Boolean).join(" · ") ||
                       "Stage and location not verified"}
                   </p>
-                  <strong>{candidate.thesis}</strong>
                 </div>
                 <div className="person-result-evidence">
-                  <span>Why now · {candidate.recency}</span>
-                  <p>{candidate.whyNow}</p>
-                  {candidate.evidence ? <small>{candidate.evidence}</small> : null}
+                  {candidate.facts.length ? (
+                    <ul className="queue-facts person-result-facts">
+                      {candidate.facts.map((fact, factIndex) => (
+                        <li key={`${candidate.id}-fact-${factIndex}`}>
+                          <span>{fact.text}</span>
+                          <span className="queue-fact-sources" aria-label="Sources">
+                            {fact.sources.map((source) => (
+                              <a href={source.url} key={source.url} rel="noreferrer" target="_blank">
+                                {source.label}<ArrowUpRight aria-hidden="true" />
+                              </a>
+                            ))}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="person-brief-pending">
+                      Source-linked brief pending. Run discovery to prepare it.
+                    </p>
+                  )}
                   {candidate.identityWarning ? (
                     <small className="identity-warning">{candidate.identityWarning}</small>
+                  ) : null}
+                  {candidate.contactRoute ? (
+                    <a
+                      aria-label={`${candidate.contactRoute.label} for ${candidate.name}`}
+                      href={candidate.contactRoute.url}
+                      rel="noreferrer"
+                      target={candidate.contactRoute.url.startsWith("mailto:") ? undefined : "_blank"}
+                    >
+                      <small>Contact · {candidate.contactRoute.label}</small>
+                    </a>
                   ) : null}
                 </div>
                 <div className="person-result-score">

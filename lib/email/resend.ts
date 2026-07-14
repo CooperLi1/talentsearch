@@ -10,7 +10,7 @@ let cachedApiKey: string | null = null
  * secret, which keeps Next.js builds and local preview mode operational.
  */
 export function getResendClient(apiKey = process.env.RESEND_API_KEY?.trim()) {
-  if (!apiKey) return null
+  if (!apiKey || !apiKey.startsWith("re_")) return null
 
   if (!cachedClient || cachedApiKey !== apiKey) {
     cachedClient = new Resend(apiKey)

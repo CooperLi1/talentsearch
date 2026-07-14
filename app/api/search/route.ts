@@ -4,6 +4,7 @@ import { parseTalentQuery } from "@/lib/search/query";
 
 import { getWorkspaceId, readJson, withDashboard } from "../_lib/http";
 import { searchRequestSchema } from "../_lib/schemas";
+import type { CandidateStatus } from "@/lib/domain/types";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,11 @@ export async function POST(request: Request) {
         limit: input.limit,
         minimumScore,
         domains: skills,
+        careerStages: input.filters?.careerStages ?? interpretedQuery.filters.careerStages,
+        eventTypes: input.filters?.eventTypes ?? interpretedQuery.filters.eventTypes,
+        locations: input.filters?.locations ?? interpretedQuery.filters.locations,
+        sources: input.filters?.sources,
+        statuses: input.filters?.statuses as CandidateStatus[] | undefined,
         embedding: embedding ?? undefined,
         semanticWeight: embedding ? 0.62 : 0,
       },

@@ -71,16 +71,20 @@ export class ArxivConnector implements DiscoveryConnector {
 
   async discover(context: ConnectorRunContext): Promise<ConnectorRunResult> {
     const maxItems = Math.min(150, context.settings.maxItems ?? 40);
-    const queries = context.settings.queries?.filter(Boolean) ?? [
-      "cat:cs.AI",
-      "cat:cs.RO",
-      "cat:cs.CR",
-      "cat:q-bio.QM",
-    ];
+    const lookbackDays = Math.min(365, Math.max(1, context.settings.lookbackDays ?? 14));
+    const since = context.now.getTime() - lookbackDays * 86_400_000;
+    const queries = (
+      context.settings.queries?.filter(Boolean) ?? [
+        "cat:cs.AI",
+        "cat:cs.RO",
+        "cat:cs.CR",
+        "cat:q-bio.QM",
+      ]
+    ).slice(0, 8);
     const events = [];
     const warnings: string[] = [];
     const parser = new XMLParser({ ignoreAttributes: false });
-    for (const query of queries.slice(0, 8)) {
+    for (const query of queries) {
       const url = new URL("https://export.arxiv.org/api/query");
       url.searchParams.set("search_query", query.includes(":") ? query : `all:${query}`);
       url.searchParams.set("start", "0");
@@ -96,6 +100,8 @@ export class ArxivConnector implements DiscoveryConnector {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const parsed = parser.parse(await response.text()) as { feed?: { entry?: ArxivEntry | ArxivEntry[] } };
         for (const entry of list(parsed.feed?.entry)) {
+          const timestamp = Date.parse(entry.published ?? entry.updated ?? "");
+          if (!Number.isFinite(timestamp) || timestamp < since) continue;
           events.push(...eventsForEntry(entry, context.now));
         }
       } catch (error) {

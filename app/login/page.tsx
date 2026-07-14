@@ -45,7 +45,7 @@ export default async function LoginPage({
           <p className="eyebrow">Private workspace</p>
           <h1>Enter your password.</h1>
           <p className="login-intro">
-            Review candidate histories, decisions, and linked public evidence.
+            Review candidates and the public evidence behind each record.
           </p>
 
           {error ? (

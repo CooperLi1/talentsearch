@@ -89,4 +89,4 @@ Connector calls and live email delivery require credentials and should be verifi
 - A generated summary is interpretation, not fact. Preserve source links and identity confidence so a person can verify it.
 - Prefer an unresolved identity cluster to a confident merge of two people with similar names.
 - Learned taste updates ranking slowly; it does not remove exploration, source-diversity checks, or human responsibility.
-- LinkedIn enrichment is limited to user-provided links or explicitly authorized APIs. Unauthorized scraping is not part of the system.
+- LinkedIn handling supports operator-confirmed profile URLs, confidence-scored URL hypotheses found on candidate-owned sites or locator-only search, and a fail-closed approved profile API integration. The app never opens LinkedIn pages, stores search snippets as evidence, or automates an authenticated LinkedIn session.

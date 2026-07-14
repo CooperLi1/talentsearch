@@ -31,11 +31,11 @@ function formatDate(value: string, includeYear = false) {
 function toDossier(candidate: Candidate): CandidateDossierView {
   return {
     confidence: candidate.confidence,
-    connections: candidate.connections.map((connection) => ({
-      name: connection.name,
-      relationship: connection.relationship,
-      source: connection.source,
-      strength: connection.strength,
+    contactRoutes: candidate.contactRoutes.map((route) => ({
+      audience: route.audience,
+      label: route.label,
+      provenanceUrl: route.provenanceUrl,
+      url: route.url,
     })),
     domains: candidate.domains,
     earlynessMarkdown: candidate.earlynessMarkdown,

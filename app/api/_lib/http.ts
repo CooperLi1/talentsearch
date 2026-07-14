@@ -1,6 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { DashboardAuthError, assertDashboardRequest } from "@/lib/auth/gate";
+import {
+  consumeRateLimit,
+  dashboardRateLimitPolicy,
+  RateLimitExceededError,
+} from "@/lib/security/rate-limit";
 import { ZodError, type ZodType } from "zod";
 
 const MAX_JSON_BYTES = 128_000;
@@ -77,6 +82,20 @@ export function apiErrorResponse(error: unknown) {
       { status: error.status },
     );
   }
+  if (error instanceof RateLimitExceededError) {
+    return Response.json(
+      { error: error.message, retryAfterSeconds: error.result.retryAfterSeconds },
+      {
+        status: 429,
+        headers: {
+          "retry-after": String(error.result.retryAfterSeconds),
+          "x-ratelimit-limit": String(error.result.limit),
+          "x-ratelimit-remaining": String(error.result.remaining),
+          "x-ratelimit-reset": error.result.resetAt,
+        },
+      },
+    );
+  }
   if (error instanceof Error && error.name === "DataNotConfiguredError") {
     return Response.json(
       { error: "Data storage is not configured", readiness: "unconfigured" },
@@ -87,7 +106,7 @@ export function apiErrorResponse(error: unknown) {
   return Response.json({ error: "Internal server error" }, { status: 500 });
 }
 
-export function withDashboard(
+export async function withDashboard(
   request: Request,
   handler: () => Promise<Response>,
 ): Promise<Response> {
@@ -99,8 +118,13 @@ export function withDashboard(
         throw new ApiError(403, "Cross-origin mutation rejected");
       }
     }
-    return handler().catch((error) => apiErrorResponse(error));
+    const rateLimit = await consumeRateLimit(
+      request,
+      dashboardRateLimitPolicy(request),
+    );
+    if (!rateLimit.allowed) throw new RateLimitExceededError(rateLimit);
+    return await handler();
   } catch (error) {
-    return Promise.resolve(apiErrorResponse(error));
+    return apiErrorResponse(error);
   }
 }

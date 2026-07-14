@@ -1,37 +1,36 @@
 import { PeopleSearch, type PeopleCandidateView } from "@/components/people/people-search";
 import { SiteNav } from "@/components/site-nav";
-import { getDataReadiness, listCandidates } from "@/lib/data/talent-radar";
+import {
+  DataNotConfiguredError,
+  getDataReadiness,
+  listCandidates,
+} from "@/lib/data/talent-radar";
+import {
+  buildOperatorBrief,
+  hasGroundedOperatorBrief,
+} from "@/lib/candidates/operator-brief";
 import type { Candidate } from "@/lib/domain/types";
+import { preferredContactRoute } from "@/lib/contact/routes";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Search" };
 
-function plainText(markdown: string) {
-  return markdown.replace(/[*_#`]/g, "").replace(/\s+/g, " ").trim();
-}
-
-function firstSentence(markdown: string, fallback: string) {
-  const text = plainText(markdown);
-  return text.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? text ?? fallback;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    month: "short",
-  }).format(new Date(value));
-}
-
 function toPeopleCandidate(candidate: Candidate): PeopleCandidateView {
-  const event = candidate.latestEvent;
   const unresolvedIdentity = candidate.identities.find(
     (identity) => identity.resolutionStatus !== "resolved",
   );
+  const contactRoute = preferredContactRoute(candidate.contactRoutes);
 
   return {
     confidence: candidate.confidence,
+    contactRoute: contactRoute
+      ? { label: contactRoute.label, url: contactRoute.url }
+      : null,
     domains: candidate.domains,
-    evidence: event ? `${event.sourceLabel} · ${event.title}` : null,
+    eventTypes: [...new Set(candidate.events.map((item) => item.type))],
+    facts: hasGroundedOperatorBrief(candidate)
+      ? buildOperatorBrief(candidate, 5)
+      : [],
     id: candidate.id,
     identityWarning: unresolvedIdentity
       ? `${unresolvedIdentity.provider} identity needs review`
@@ -41,22 +40,24 @@ function toPeopleCandidate(candidate: Candidate): PeopleCandidateView {
     initials: candidate.initials,
     location: candidate.location,
     name: candidate.name,
-    recency: formatDate(event?.discoveredAt ?? candidate.lastSeenAt),
     score: candidate.score,
     slug: candidate.slug,
+    sourceLabels: [...new Set(candidate.events.map((item) => item.sourceLabel))],
     stage: candidate.stage,
     status: candidate.status,
     thesis: candidate.headline,
-    whyNow: firstSentence(
-      candidate.whyNowMarkdown,
-      "No review note yet.",
-    ),
   };
 }
 
 export default async function PeoplePage() {
-  const readiness = getDataReadiness();
-  const candidates = await listCandidates({ limit: 250 });
+  let readiness = getDataReadiness();
+  let candidates: Candidate[] = [];
+  try {
+    candidates = await listCandidates({ limit: 250 });
+  } catch (error) {
+    if (!(error instanceof DataNotConfiguredError)) throw error;
+    readiness = { ...readiness, dataMode: "unconfigured" };
+  }
 
   return (
     <main className="app-main operator-page">
@@ -66,7 +67,7 @@ export default async function PeoplePage() {
           <div>
             <p className="eyebrow">Candidate records</p>
             <h1>Search people</h1>
-            <p>Find people by demonstrated work, background, and verified evidence.</p>
+            <p>Search by a person&apos;s work, background, or linked evidence.</p>
           </div>
         </header>
         <PeopleSearch

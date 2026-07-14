@@ -71,11 +71,22 @@ function compareIdentity(
       `${identity.provider}:${identity.externalId.toLocaleLowerCase("en-US")}`,
     ),
   );
-  if (exact) {
+  const observedExact = exact
+    ? observedByProvider.get(
+        `${exact.provider}:${exact.externalId.toLocaleLowerCase("en-US")}`,
+      )
+    : undefined;
+  if (exact && observedExact) {
+    const verifiedAssociation =
+      exact.verified !== false && observedExact.verified === true;
     return {
-      score: exact.verified === false ? 0.92 : 1,
-      durable: true,
-      reasons: [`Exact ${exact.provider} identifier`],
+      score: verifiedAssociation ? 1 : 0.92,
+      durable: verifiedAssociation,
+      reasons: [
+        verifiedAssociation
+          ? `Exact ${exact.provider} identifier`
+          : `Unverified ${exact.provider} identifier claim`,
+      ],
     };
   }
 

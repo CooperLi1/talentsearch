@@ -15,18 +15,51 @@ import { createDiscoveryEvent } from "./shared";
 
 type FeedEntry = Record<string, unknown>;
 
+const GENERIC_PUBLISHER_BYLINES = new Set([
+  "cloudflare",
+  "github",
+  "github blog",
+  "gitlab",
+  "mozilla",
+  "mozilla hacks",
+]);
+
 function list<T>(value: T | T[] | undefined): T[] {
   if (value === undefined) return [];
   return Array.isArray(value) ? value : [value];
 }
 
-function scalar(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number") return String(value);
+function scalarValues(value: unknown): string[] {
+  if (typeof value === "string" || typeof value === "number") return [String(value)];
+  if (Array.isArray(value)) {
+    return value.flatMap(scalarValues);
+  }
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return scalar(record["#text"] ?? record.name ?? record["@_href"] ?? "");
+    return scalarValues(record["#text"] ?? record.name ?? record["@_href"] ?? "");
   }
-  return "";
+  return [];
+}
+
+function scalar(value: unknown): string {
+  return scalarValues(value).find(Boolean) ?? "";
+}
+
+export function interleaveFeedResults<T>(groups: readonly (readonly T[])[], limit: number): T[] {
+  if (limit <= 0) return [];
+
+  const interleaved: T[] = [];
+  for (let itemIndex = 0; interleaved.length < limit; itemIndex += 1) {
+    let foundItem = false;
+    for (const group of groups) {
+      if (itemIndex >= group.length) continue;
+      foundItem = true;
+      interleaved.push(group[itemIndex]!);
+      if (interleaved.length >= limit) break;
+    }
+    if (!foundItem) break;
+  }
+  return interleaved;
 }
 
 function entryUrl(entry: FeedEntry, feedUrl: string): string {
@@ -44,11 +77,29 @@ function entryUrl(entry: FeedEntry, feedUrl: string): string {
   }
 }
 
-function entryAuthor(entry: FeedEntry): string {
-  return sanitizePlainText(
-    scalar(entry.author) || scalar(entry.creator) || scalar(entry.contributor),
-    200,
-  );
+export function extractFeedAuthors(entry: Record<string, unknown>): string[] {
+  const authors: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [entry.author, entry.creator, entry.contributor].flatMap(scalarValues)) {
+    const author = sanitizePlainText(raw, 200);
+    const normalized = author
+      .toLocaleLowerCase("en-US")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+    if (
+      !author ||
+      !normalized ||
+      GENERIC_PUBLISHER_BYLINES.has(normalized) ||
+      /(?:^| )(?:staff|team)$/u.test(normalized) ||
+      seen.has(normalized)
+    ) {
+      continue;
+    }
+    seen.add(normalized);
+    authors.push(author);
+    if (authors.length >= 8) break;
+  }
+  return authors;
 }
 
 export class FeedConnector implements DiscoveryConnector {
@@ -65,9 +116,9 @@ export class FeedConnector implements DiscoveryConnector {
   }
 
   async discover(context: ConnectorRunContext): Promise<ConnectorRunResult> {
-    const urls = context.settings.urls?.filter(Boolean) ?? [];
+    const urls = [...new Set(context.settings.urls?.filter(Boolean) ?? [])].slice(0, 30);
     const maxItems = Math.min(250, context.settings.maxItems ?? 80);
-    const events = [];
+    const eventsByFeed: Array<ReturnType<typeof createDiscoveryEvent>[]> = [];
     const warnings: string[] = [];
     const parser = new XMLParser({
       ignoreAttributes: false,
@@ -75,7 +126,8 @@ export class FeedConnector implements DiscoveryConnector {
       trimValues: true,
     });
 
-    for (const feedUrl of urls.slice(0, 30)) {
+    for (const feedUrl of urls) {
+      const feedEvents: ReturnType<typeof createDiscoveryEvent>[] = [];
       try {
         const response = await smartFetch(feedUrl, {
           respectRobots: true,
@@ -89,52 +141,58 @@ export class FeedConnector implements DiscoveryConnector {
           feed?: { entry?: FeedEntry | FeedEntry[] };
         };
         const entries = list(parsed.rss?.channel?.item ?? parsed.feed?.entry).slice(0, maxItems);
-        for (const entry of entries) {
-          const author = entryAuthor(entry);
-          if (!author) continue;
+        entries: for (const entry of entries) {
+          const authors = extractFeedAuthors(entry);
+          if (!authors.length) continue;
           const sourceUrl = entryUrl(entry, feedUrl);
-          const externalId =
+          const entryExternalId =
             scalar(entry.guid) || scalar(entry.id) || stableHash(sourceUrl, scalar(entry.title));
-          const person: PersonObservation = {
-            displayName: author,
-            identities: [
-              {
-                provider: this.kind,
-                externalId: stableHash(feedUrl, author),
-                verified: false,
-              },
-            ],
-            sourceUrl,
-          };
-          events.push(
-            createDiscoveryEvent({
-              source: this.kind,
-              sourceExternalId: externalId,
-              type: this.eventType,
-              title: `${author}: ${sanitizePlainText(scalar(entry.title), 500)}`,
-              description:
-                sanitizePlainText(
-                  scalar(entry.summary) || scalar(entry.description) || scalar(entry.content),
-                  3_000,
-                ) || undefined,
-              occurredAt: scalar(entry.published) || scalar(entry.updated) || scalar(entry.pubDate),
+          for (const author of authors) {
+            const normalizedAuthor = author.toLocaleLowerCase("en-US");
+            const person: PersonObservation = {
+              displayName: author,
+              identities: [
+                {
+                  provider: this.kind,
+                  externalId: stableHash(feedUrl, normalizedAuthor),
+                  verified: false,
+                },
+              ],
               sourceUrl,
-              person,
-              tags: ["feed"],
-              confidence: 0.62,
-              now: context.now,
-            }),
-          );
+            };
+            feedEvents.push(
+              createDiscoveryEvent({
+                source: this.kind,
+                sourceExternalId: stableHash(entryExternalId, normalizedAuthor),
+                type: this.eventType,
+                title: `${author}: ${sanitizePlainText(scalar(entry.title), 500)}`,
+                description:
+                  sanitizePlainText(
+                    scalar(entry.summary) || scalar(entry.description) || scalar(entry.content),
+                    3_000,
+                  ) || undefined,
+                occurredAt:
+                  scalar(entry.published) || scalar(entry.updated) || scalar(entry.pubDate),
+                sourceUrl,
+                person,
+                tags: ["feed"],
+                confidence: 0.62,
+                now: context.now,
+              }),
+            );
+            if (feedEvents.length >= maxItems) break entries;
+          }
         }
       } catch (error) {
         warnings.push(
           `${feedUrl}: ${error instanceof Error ? error.message : "unknown error"}`,
         );
       }
+      eventsByFeed.push(feedEvents);
     }
 
     return {
-      events: events.slice(0, maxItems),
+      events: interleaveFeedResults(eventsByFeed, maxItems),
       cursor: { since: context.now.toISOString() },
       warnings,
     };

@@ -4,15 +4,19 @@ import {
   embedCandidateTexts,
 } from "@/lib/ai/embeddings";
 import {
+  candidateBriefContractIssues,
+  fallbackCandidateSummary,
   fallbackEventSummary,
-  summarizeCandidate,
+  generateCandidateBrief,
   summarizeEvent,
 } from "@/lib/ai/summaries";
+import { CURRENT_CANDIDATE_BRIEF_POLICY } from "@/lib/candidates/brief-policy";
 
 import { parseDiscoveryConfiguration, type DiscoveryConfiguration } from "./config";
 import { createConnectorRegistry } from "./connectors";
 import { mapLimit } from "./connectors/shared";
 import { deduplicateEvents } from "./idempotency";
+import { evidencePublisherCount } from "./evidence-publishers";
 import { enrichPeople } from "./enrichment";
 import { expandDiscoveryGraph, graphEdgesToCandidateEvents } from "./graph";
 import { resolveIdentity } from "./identity";
@@ -42,6 +46,8 @@ function eventPriority(event: DiscoveryEvent) {
     event.confidence * 10 +
     Math.log1p(metrics.momentum ?? 0) +
     Math.log1p(metrics.citations ?? 0) +
+    Math.log1p(metrics.graphSupportWeight ?? 0) * 2 +
+    Math.log1p(metrics.graphSourceIdentities ?? 0) +
     (metrics.rank ? 4 / Math.sqrt(metrics.rank) : 0)
   );
 }
@@ -60,18 +66,35 @@ async function persistObservedEvents(input: {
     string,
     { person: PersonObservation; events: DiscoveryEvent[] }
   >();
+  const candidateByVerifiedIdentity = new Map<string, string>();
 
   for (const event of input.events) {
-    const candidates = await input.repository.findIdentityCandidates(
-      input.workspaceId,
-      event.person,
-    );
-    const decision = resolveIdentity(event.person, candidates);
+    const primaryIdentity = event.person.identities[0];
+    const durableIdentityKey = primaryIdentity?.verified === true
+      ? `${primaryIdentity.provider}:${primaryIdentity.externalId}`.toLocaleLowerCase("en-US")
+      : null;
+    const alreadyBoundCandidateId = durableIdentityKey
+      ? candidateByVerifiedIdentity.get(durableIdentityKey)
+      : undefined;
+    const decision = alreadyBoundCandidateId
+      ? {
+          action: "match" as const,
+          candidateId: alreadyBoundCandidateId,
+          confidence: 1,
+          reasons: ["Same verified provider subject resolved earlier in this batch"],
+        }
+      : resolveIdentity(
+          event.person,
+          await input.repository.findIdentityCandidates(input.workspaceId, event.person),
+        );
     const persisted = await input.repository.persistIdentityDecision({
       workspaceId: input.workspaceId,
       observation: event.person,
       decision,
     });
+    if (durableIdentityKey) {
+      candidateByVerifiedIdentity.set(durableIdentityKey, persisted.candidateId);
+    }
     if (persisted.created) {
       createdCandidateIds.add(persisted.candidateId);
       updatedCandidateIds.delete(persisted.candidateId);
@@ -136,38 +159,120 @@ async function refreshIntelligence(input: {
       ...(input.runEvents?.get(target.id) ?? []),
     ]);
     const score = scoreCandidate({ events, weights: input.weights });
-    const summary = await summarizeCandidate({
-      person: target.person,
-      events,
-      score,
-      previousSummary: target.previousSummary,
-    });
+    const summary = fallbackCandidateSummary(target.person, events, score);
     return {
       target,
       events,
       score,
       summary,
-      embeddingText: buildCandidateEmbeddingText({
-        person: target.person,
-        events,
-        summary: summary.summary,
-      }),
     };
   });
-  const embeddings = await embedCandidateTexts(prepared.map((item) => item.embeddingText)).catch(() =>
-    prepared.map(() => null),
-  );
-  await mapLimit(prepared, 3, async (item, index) => {
+  await mapLimit(prepared, 3, async (item) => {
     await input.repository.updateCandidateIntelligence({
       workspaceId: input.workspaceId,
       candidateId: item.target.id,
       score: item.score,
       summary: item.summary,
-      embedding: embeddings[index],
-      embeddingModel: embeddings[index] ? DEFAULT_EMBEDDING_MODEL : null,
+      embedding: null,
+      embeddingModel: null,
+      persistSummary: false,
+      sourceCount: evidencePublisherCount(item.events),
     });
   });
   return prepared.map((item) => ({ candidateId: item.target.id, score: item.score }));
+}
+
+export async function runCandidateBriefBatch(input: {
+  repository: DiscoveryRepository;
+  workspaceId: string;
+  limit?: number;
+  weights?: ScoringWeights;
+}) {
+  const limit = Math.min(30, Math.max(0, Math.floor(input.limit ?? 12)));
+  if (!limit) return { claimed: 0, completed: 0, failed: 0 };
+  const targets = await input.repository.listBriefingTargets(input.workspaceId, limit);
+  let generationFailures = 0;
+  let contractFailures = 0;
+  const prepared = await mapLimit(targets, 3, async (target) => {
+    try {
+      const events = deduplicateEvents(
+        target.events.length
+          ? target.events
+          : await input.repository.listCandidateEvents(input.workspaceId, target.id),
+      );
+      const score = scoreCandidate({ events, weights: input.weights });
+      const summary = await generateCandidateBrief({
+        person: target.person,
+        events,
+        score,
+        previousSummary: target.previousSummary,
+      });
+      if (!summary) {
+        generationFailures += 1;
+        await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+        return null;
+      }
+      const contractIssues = candidateBriefContractIssues(summary.summary, events);
+      if (!target.briefEvidenceFingerprint || contractIssues.length) {
+        contractFailures += 1;
+        console.warn("Candidate brief contract rejected model output", {
+          issues: target.briefEvidenceFingerprint ? contractIssues : ["missing-fingerprint"],
+        });
+        await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+        return null;
+      }
+      return {
+        target,
+        events,
+        score,
+        summary,
+        embeddingText: buildCandidateEmbeddingText({
+          person: target.person,
+          events,
+          summary: summary.summary,
+        }),
+      };
+    } catch {
+      await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+      return null;
+    }
+  });
+  const completed = prepared.filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const embeddings = await embedCandidateTexts(completed.map((item) => item.embeddingText)).catch(() =>
+    completed.map(() => null),
+  );
+  const generatedAt = new Date().toISOString();
+  const briefModel = process.env.AI_SUMMARY_MODEL || process.env.AI_MODEL || "openai/gpt-4o-mini";
+  let persistenceFailures = 0;
+  await mapLimit(completed, 3, async (item, index) => {
+    try {
+      await input.repository.updateCandidateIntelligence({
+        workspaceId: input.workspaceId,
+        candidateId: item.target.id,
+        score: item.score,
+        summary: item.summary,
+        embedding: embeddings[index],
+        embeddingModel: embeddings[index] ? DEFAULT_EMBEDDING_MODEL : null,
+        persistSummary: true,
+        briefEvidenceFingerprint: item.target.briefEvidenceFingerprint,
+        briefGeneratedAt: generatedAt,
+        briefModel,
+        briefPromptVersion: CURRENT_CANDIDATE_BRIEF_POLICY,
+      });
+    } catch {
+      persistenceFailures += 1;
+      await input.repository.releaseCandidateBrief(input.workspaceId, item.target.id).catch(() => undefined);
+    }
+  });
+  const persisted = completed.length - persistenceFailures;
+  return {
+    claimed: targets.length,
+    completed: persisted,
+    failed: targets.length - persisted,
+    generationFailures,
+    contractFailures,
+    persistenceFailures,
+  };
 }
 
 export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryRunSummary> {
@@ -271,12 +376,18 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       });
     }
 
+    const requestedAutomaticReviewLimit = Number(process.env.AUTOMATIC_REVIEW_LIMIT ?? 100);
+    const automaticReviewLimit = Number.isFinite(requestedAutomaticReviewLimit)
+      ? Math.max(0, Math.floor(requestedAutomaticReviewLimit))
+      : 100;
     const enrichmentTargets = await options.repository.listEnrichmentTargets(
       options.workspaceId,
       configuration.enrichTopCandidates,
     );
     const enrichment = await enrichPeople({
       people: enrichmentTargets.map((target) => target.person),
+      evidenceEvents: enrichmentTargets.map((target) => target.events),
+      researchPasses: enrichmentTargets.map((target) => target.researchPass ?? 0),
       connectors: registry,
       settings: configuration.connectors,
       now: startedAt,
@@ -293,6 +404,16 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       aiSummaryKeys: allocateAiSummaryKeys(enrichedEvents),
     });
     recordPersistence(enrichedEvents, enrichedPersisted);
+    await mapLimit(enrichmentTargets, 3, async (target, index) => {
+      await options.repository.recordEnrichmentAttempt({
+        workspaceId: options.workspaceId,
+        candidateId: target.id,
+        attemptedAt: startedAt.toISOString(),
+        eventCount: enrichment.results[index]?.events.length ?? 0,
+        researchPass: target.researchPass,
+        researchRevision: target.researchRevision,
+      });
+    });
     for (const candidateId of enrichedPersisted.affected.keys()) {
       enrichedCandidateIds.add(candidateId);
     }
@@ -304,14 +425,29 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       });
     }
 
+    const requestedGraphSeedLimit = Number(process.env.GRAPH_SEED_LIMIT ?? 12);
+    const graphSeedLimit = Number.isFinite(requestedGraphSeedLimit)
+      ? Math.min(25, Math.max(0, Math.floor(requestedGraphSeedLimit)))
+      : 12;
+    const graphSeeds = graphSeedLimit
+      ? await options.repository.listGraphExpansionSeeds(options.workspaceId, graphSeedLimit)
+      : [];
+    if (graphSeeds.length) {
+      await options.repository.bindGraphExpansionSeeds(options.workspaceId, graphSeeds);
+    }
+    const requestedGraphEdgesPerSeed = Number(process.env.GRAPH_EDGE_LIMIT_PER_SEED ?? 60);
+    const graphEdgesPerSeed = Number.isFinite(requestedGraphEdgesPerSeed)
+      ? Math.min(100, Math.max(1, Math.floor(requestedGraphEdgesPerSeed)))
+      : 60;
     let expandedGraphEdges = initialGraphEdges.slice(0, 0);
-    if (configuration.graphDepth > 0 && enrichmentTargets.length) {
+    if (configuration.graphDepth > 0 && graphSeeds.length) {
       const graph = await expandDiscoveryGraph({
-        seeds: enrichmentTargets.map((target) => target.person),
+        seeds: graphSeeds.map((target) => target.person),
         connectors: registry,
         settings: configuration.connectors,
         maxDepth: configuration.graphDepth,
         maxNodes: configuration.graphNodeLimit,
+        maxEdgesPerSeed: graphEdgesPerSeed,
         now: startedAt,
         signal: options.signal,
       });
@@ -404,15 +540,21 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
         ]);
       }
     }
+    const requestedIntelligenceLimit = Number(process.env.INTELLIGENCE_REFRESH_LIMIT ?? 30);
+    const configuredIntelligenceLimit = Number.isFinite(requestedIntelligenceLimit)
+      ? Math.max(0, Math.floor(requestedIntelligenceLimit))
+      : 30;
     const intelligenceLimit = Math.min(
       100,
       Math.max(
-        configuration.enrichTopCandidates,
-        Number(process.env.INTELLIGENCE_REFRESH_LIMIT ?? 30),
-        affectedEvents.size,
+        configuredIntelligenceLimit,
+        automaticReviewLimit,
       ),
     );
-    const existingTargets = new Map(enrichmentTargets.map((target) => [target.id, target]));
+    const reviewTargets = intelligenceLimit > configuration.enrichTopCandidates
+      ? await options.repository.listIntelligenceTargets(options.workspaceId, intelligenceLimit)
+      : enrichmentTargets;
+    const existingTargets = new Map(reviewTargets.map((target) => [target.id, target]));
     const graphCandidateIds = new Set(graphPersisted.affected.keys());
     const freshTargets = [...affectedEvents]
       .map(([candidateId, candidateEvents]) => {
@@ -440,7 +582,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       if (targetMap.size >= intelligenceLimit) break;
       targetMap.set(target.id, target);
     }
-    for (const target of enrichmentTargets) {
+    for (const target of reviewTargets) {
       if (targetMap.size >= intelligenceLimit) break;
       if (!targetMap.has(target.id)) targetMap.set(target.id, target);
     }

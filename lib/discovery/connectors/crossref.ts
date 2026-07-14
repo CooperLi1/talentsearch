@@ -112,14 +112,16 @@ export class CrossrefConnector implements DiscoveryConnector {
     const since = new Date(context.now.getTime() - lookbackDays * 86_400_000)
       .toISOString()
       .slice(0, 10);
-    const queries = context.settings.queries?.filter(Boolean) ?? [
-      "machine learning",
-      "robotics",
-      "cryptography",
-    ];
+    const queries = (
+      context.settings.queries?.filter(Boolean) ?? [
+        "machine learning",
+        "robotics",
+        "cryptography",
+      ]
+    ).slice(0, 8);
     const events: DiscoveryEvent[] = [];
     const warnings: string[] = [];
-    for (const query of queries.slice(0, 6)) {
+    for (const query of queries) {
       const url = new URL("https://api.crossref.org/works");
       url.searchParams.set("query", query);
       url.searchParams.set("filter", `from-pub-date:${since}`);

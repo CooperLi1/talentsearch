@@ -18,13 +18,19 @@ export interface DigestEvent {
   occurredAt?: string
 }
 
+export interface DigestFact {
+  text: string
+  sources: DigestSource[]
+}
+
 export interface DigestCandidate {
   id: string
   name: string
   headline: string
   summary: string
-  whyNow: string
-  earlyness: string
+  facts: DigestFact[]
+  whyNow?: string
+  earlyness?: string
   confidence: DigestConfidence
   section?: DigestSection
   sources: DigestSource[]
@@ -89,7 +95,7 @@ export type WeeklyDigestDeliveryResult =
     })
   | (DigestDeliveryBase & {
       status: "preview"
-      reason: "preview-requested" | "delivery-disabled" | "missing-api-key"
+      reason: "preview-requested" | "delivery-disabled"
     })
   | (DigestDeliveryBase & {
       status: "skipped"

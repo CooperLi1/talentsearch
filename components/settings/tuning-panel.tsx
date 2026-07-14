@@ -1,66 +1,35 @@
 "use client";
 
 import { SubscriberManager, type SubscriberView } from "@/components/settings/subscriber-manager";
+import { SettingsSectionNav } from "@/components/settings/settings-section-nav";
+import { DEFAULT_CRITERION_SIGNALS } from "@/lib/criteria/signals";
 import type { CriterionProfile, DiscoverySource } from "@/lib/domain/types";
-import { Check, RotateCcw, Save } from "lucide-react";
+import { Check, RotateCcw, Save, Sparkles } from "lucide-react";
 import { useState } from "react";
 
-const fallbackSignals: CriterionProfile["signals"] = [
-  {
-    description: "Evidence that someone built something original",
-    enabled: true,
-    key: "projectOriginality",
-    label: "Original work",
-    weight: 0.2,
-  },
-  {
-    description: "Difficulty and depth of the demonstrated work",
-    enabled: true,
-    key: "technicalComplexity",
-    label: "Technical depth",
-    weight: 0.18,
-  },
-  {
-    description: "Recent evidence of increasing ambition or output",
-    enabled: true,
-    key: "trajectoryVelocity",
-    label: "Recent momentum",
-    weight: 0.17,
-  },
-  {
-    description: "Independent use, collaboration, or trusted attention",
-    enabled: true,
-    key: "networkProximity",
-    label: "External pull",
-    weight: 0.14,
-  },
-  {
-    description: "Difficulty and selectivity of a verified achievement",
-    enabled: true,
-    key: "achievementQuality",
-    label: "Achievement quality",
-    weight: 0.11,
-  },
-  {
-    description: "Agreement across independent public sources",
-    enabled: true,
-    key: "evidenceDiversity",
-    label: "Independent evidence",
-    weight: 0.1,
-  },
-  {
-    description: "Strong work relative to current recognition",
-    enabled: true,
-    key: "earlyness",
-    label: "Still early",
-    weight: 0.1,
-  },
+const qualityOptions = [
+  { label: "Broad · more people to inspect", value: 12 },
+  { label: "Balanced · strong evidence", value: 18 },
+  { label: "Selective · exceptional evidence", value: 28 },
 ];
 
-const qualityOptions = [
-  { label: "Broad · more people to inspect", value: 62 },
-  { label: "Balanced · strong evidence", value: 75 },
-  { label: "Selective · exceptional evidence", value: 86 },
+const deliveryTimes = Array.from({ length: 24 * 4 }, (_, index) => {
+  const hour = Math.floor(index / 4);
+  const minute = (index % 4) * 15;
+  return {
+    label: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} UTC`,
+    value: hour * 60 + minute,
+  };
+});
+
+const deliveryDays = [
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+  { label: "Sun", value: 0 },
 ];
 
 export function TuningPanel({
@@ -85,6 +54,22 @@ export function TuningPanel({
   const [candidateCount, setCandidateCount] = useState(
     String(criterion.weeklyCandidateCount),
   );
+  const [digestDaysOfWeek, setDigestDaysOfWeek] = useState(criterion.digestDaysOfWeek);
+  const [digestDeliveryHourUtc, setDigestDeliveryHourUtc] = useState(
+    criterion.digestDeliveryHourUtc,
+  );
+  const [digestDeliveryMinuteUtc, setDigestDeliveryMinuteUtc] = useState(
+    criterion.digestDeliveryMinuteUtc,
+  );
+  const [digestPreparationLeadHours, setDigestPreparationLeadHours] = useState(
+    criterion.digestPreparationLeadHours,
+  );
+  const [signals, setSignals] = useState(
+    criterion.signals.length ? criterion.signals : DEFAULT_CRITERION_SIGNALS,
+  );
+  const [criteriaInstruction, setCriteriaInstruction] = useState("");
+  const [draftingCriteria, setDraftingCriteria] = useState(false);
+  const [criteriaDraftMessage, setCriteriaDraftMessage] = useState<string | null>(null);
   const [learningEnabled, setLearningEnabled] = useState(criterion.learningRate > 0);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -103,6 +88,13 @@ export function TuningPanel({
     setAvoid(criterion.avoidMarkdown);
     setMinimumScore(criterion.minimumScore);
     setCandidateCount(String(criterion.weeklyCandidateCount));
+    setDigestDaysOfWeek(criterion.digestDaysOfWeek);
+    setDigestDeliveryHourUtc(criterion.digestDeliveryHourUtc);
+    setDigestDeliveryMinuteUtc(criterion.digestDeliveryMinuteUtc);
+    setDigestPreparationLeadHours(criterion.digestPreparationLeadHours);
+    setSignals(criterion.signals.length ? criterion.signals : DEFAULT_CRITERION_SIGNALS);
+    setCriteriaInstruction("");
+    setCriteriaDraftMessage(null);
     setLearningEnabled(criterion.learningRate > 0);
     setSaved(false);
     setSaveError(null);
@@ -116,12 +108,17 @@ export function TuningPanel({
       const response = await fetch("/api/settings", {
         body: JSON.stringify({
           avoidMarkdown: avoid,
+          digestCadence: criterion.digestCadence,
+          digestDaysOfWeek,
+          digestDeliveryHourUtc,
+          digestDeliveryMinuteUtc,
+          digestPreparationLeadHours,
           explorationRate: criterion.explorationRate,
           learningRate: learningEnabled ? Math.max(criterion.learningRate, 0.01) : 0,
           lookForMarkdown: lookFor,
           minimumConfidence: criterion.minimumConfidence,
           minimumScore,
-          signals: criterion.signals.length ? criterion.signals : fallbackSignals,
+          signals,
           weeklyCandidateCount: Number(candidateCount),
         }),
         headers: { "content-type": "application/json" },
@@ -134,6 +131,36 @@ export function TuningPanel({
       setSaveError(caught instanceof Error ? caught.message : "Could not save settings");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function draftCriteria() {
+    setDraftingCriteria(true);
+    setCriteriaDraftMessage(null);
+    setSaveError(null);
+    try {
+      const response = await fetch("/api/settings/suggest", {
+        body: JSON.stringify({ instruction: criteriaInstruction }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        draft?: Pick<CriterionProfile, "lookForMarkdown" | "avoidMarkdown" | "minimumScore" | "signals">;
+        error?: string;
+      };
+      if (!response.ok || !payload.draft) {
+        throw new Error(payload.error ?? "Could not draft criteria");
+      }
+      setLookFor(payload.draft.lookForMarkdown);
+      setAvoid(payload.draft.avoidMarkdown);
+      setMinimumScore(payload.draft.minimumScore);
+      setSignals(payload.draft.signals);
+      setSaved(false);
+      setCriteriaDraftMessage("Draft applied. Review it before saving.");
+    } catch (caught) {
+      setCriteriaDraftMessage(caught instanceof Error ? caught.message : "Could not draft criteria");
+    } finally {
+      setDraftingCriteria(false);
     }
   }
 
@@ -175,13 +202,7 @@ export function TuningPanel({
 
   return (
     <div className="settings-layout">
-      <nav className="settings-nav" aria-label="Settings sections">
-        <a href="#target">Target profile</a>
-        <a href="#quality">Quality cutoff</a>
-        <a href="#digest">Weekly brief</a>
-        <a href="#sources">Source coverage</a>
-        <a href="#adaptation">Review preferences</a>
-      </nav>
+      <SettingsSectionNav />
 
       <div className="settings-content">
         <section className="settings-section" id="target">
@@ -215,6 +236,56 @@ export function TuningPanel({
               />
             </label>
           </div>
+          <div className="criteria-drafter">
+            <div className="criteria-drafter-copy">
+              <span>Draft from an instruction</span>
+              <p>Describe the change you want. The draft updates the target, cutoff, and weights, but nothing is saved until you approve it.</p>
+            </div>
+            <textarea
+              aria-label="Instruction for criteria draft"
+              onChange={(event) => setCriteriaInstruction(event.target.value)}
+              placeholder="Example: favor technically difficult projects and recent momentum; broaden toward hardware and computational biology."
+              rows={3}
+              value={criteriaInstruction}
+            />
+            <div className="criteria-drafter-action">
+              <button
+                className="editorial-button editorial-button-light"
+                disabled={draftingCriteria || criteriaInstruction.trim().length < 10}
+                onClick={draftCriteria}
+                type="button"
+              >
+                <Sparkles aria-hidden="true" />
+                {draftingCriteria ? "Drafting" : "Draft changes"}
+              </button>
+              {criteriaDraftMessage ? <span role="status">{criteriaDraftMessage}</span> : null}
+            </div>
+          </div>
+          <div className="criteria-priorities">
+            <div className="criteria-priorities-heading">
+              <h3>Priority weights</h3>
+              <p>Weights are normalized when you save.</p>
+            </div>
+            {signals.map((signal) => (
+              <label className="criteria-priority-row" key={signal.key}>
+                <span>{signal.label}</span>
+                <input
+                  aria-label={`${signal.label} weight`}
+                  max="1"
+                  min="0"
+                  onChange={(event) => {
+                    const weight = Number(event.target.value);
+                    setSignals((current) => current.map((item) => item.key === signal.key ? { ...item, weight } : item));
+                    setSaved(false);
+                  }}
+                  step="0.01"
+                  type="range"
+                  value={signal.weight}
+                />
+                <output>{Math.round(signal.weight * 100)}%</output>
+              </label>
+            ))}
+          </div>
         </section>
 
         <section className="settings-section" id="quality">
@@ -242,32 +313,83 @@ export function TuningPanel({
 
         <section className="settings-section" id="digest">
           <header className="settings-section-header">
-            <h2>Weekly brief</h2>
-            <p>Control the review volume and who receives the current shortlist.</p>
+            <h2>Brief delivery</h2>
+            <p>Choose the days, send time, review volume, and recipient list.</p>
           </header>
-          <div className="settings-grid-two">
-            <div className="setting-field">
-              <label htmlFor="candidate-count">Candidates per brief</label>
-              <select
+          <div className="settings-grid-three">
+            <label className="setting-field" htmlFor="candidate-count">
+              <span>Candidates per brief</span>
+              <input
                 id="candidate-count"
+                max="100"
+                min="1"
                 onChange={(event) => {
                   setCandidateCount(event.target.value);
                   setSaved(false);
                 }}
+                type="number"
                 value={candidateCount}
+              />
+              <small>Choose between 1 and 100.</small>
+            </label>
+            <label className="setting-field" htmlFor="digest-delivery-time">
+              <span>Send time</span>
+              <select
+                id="digest-delivery-time"
+                onChange={(event) => {
+                  const totalMinutes = Number(event.target.value);
+                  setDigestDeliveryHourUtc(Math.floor(totalMinutes / 60));
+                  setDigestDeliveryMinuteUtc(totalMinutes % 60);
+                  setSaved(false);
+                }}
+                value={digestDeliveryHourUtc * 60 + digestDeliveryMinuteUtc}
               >
-                <option value="8">8 · highly selective</option>
-                <option value="12">12 · balanced</option>
-                <option value="18">18 · broader review</option>
-                <option value="25">25 · research mode</option>
+                {deliveryTimes.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-            </div>
-            <div className="setting-field setting-field-readonly">
-              <span>Delivery</span>
-              <strong>Monday morning</strong>
-              <small>Schedule changes are not available in this workspace yet.</small>
-            </div>
+              <small>Times use UTC and run in 15-minute windows.</small>
+            </label>
+            <label className="setting-field" htmlFor="digest-preparation-lead">
+              <span>Prepare ahead</span>
+              <input
+                id="digest-preparation-lead"
+                max="12"
+                min="1"
+                onChange={(event) => {
+                  setDigestPreparationLeadHours(Number(event.target.value));
+                  setSaved(false);
+                }}
+                type="number"
+                value={digestPreparationLeadHours}
+              />
+              <small>Hours before send time; choose 1–12.</small>
+            </label>
           </div>
+          <fieldset className="delivery-days">
+            <legend>Send on</legend>
+            <div className="delivery-day-options">
+              {deliveryDays.map((day) => (
+                <label key={day.value}>
+                  <input
+                    checked={digestDaysOfWeek.includes(day.value)}
+                    onChange={(event) => {
+                      setDigestDaysOfWeek((current) => event.target.checked
+                        ? [...new Set([...current, day.value])]
+                        : current.length > 1
+                          ? current.filter((value) => value !== day.value)
+                          : current);
+                      setSaved(false);
+                    }}
+                    type="checkbox"
+                  />
+                  <span>{day.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <div className="subscriber-manager-wrap">
             <SubscriberManager initialSubscribers={subscribers} />
           </div>

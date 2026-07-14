@@ -1,12 +1,12 @@
 import {
   SignalsConsole,
-  type SignalEdgeView,
-  type SignalNodeView,
   type SignalSourceView,
 } from "@/components/signals/signals-console";
+import { SourceConfigEditor } from "@/components/signals/source-config-editor";
+import { normalizeSourceConfiguration } from "@/components/signals/source-config";
 import { SiteNav } from "@/components/site-nav";
 import { getDashboardData } from "@/lib/data/talent-radar";
-import type { Candidate, DiscoverySource } from "@/lib/domain/types";
+import type { DiscoverySource } from "@/lib/domain/types";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Sources" };
@@ -23,7 +23,10 @@ function formatDate(value: string | null) {
 
 function toSource(source: DiscoverySource): SignalSourceView {
   return {
+    configuration: normalizeSourceConfiguration(source.config),
     id: source.id,
+    enabled: source.enabled,
+    key: source.key,
     lastChecked: formatDate(source.lastSuccessAt),
     name: source.name,
     newCandidates: source.discoveredThisWeek,
@@ -36,40 +39,9 @@ function toSource(source: DiscoverySource): SignalSourceView {
   };
 }
 
-function buildGraph(candidates: Candidate[]) {
-  const visible = candidates.slice(0, 8);
-  const slugToId = new Map(visible.map((candidate) => [candidate.slug, candidate.id]));
-  const nodes: SignalNodeView[] = visible.map((candidate) => ({
-    id: candidate.id,
-    initials: candidate.initials,
-    label: candidate.name,
-  }));
-  const seen = new Set<string>();
-  const edges: SignalEdgeView[] = [];
-
-  for (const candidate of visible) {
-    for (const connection of candidate.connections) {
-      if (!connection.candidateSlug) continue;
-      const target = slugToId.get(connection.candidateSlug);
-      if (!target || target === candidate.id) continue;
-      const key = [candidate.id, target].sort().join(":");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push({
-        from: candidate.id,
-        label: connection.relationship,
-        strength: connection.strength,
-        to: target,
-      });
-    }
-  }
-
-  return { edges, nodes };
-}
-
 export default async function SignalsPage() {
   const data = await getDashboardData();
-  const graph = buildGraph(data.candidates.slice(0, 40));
+  const sources = data.sources.map(toSource);
 
   return (
     <main className="app-main operator-page">
@@ -78,15 +50,14 @@ export default async function SignalsPage() {
         <header className="operator-header operator-header-compact">
           <div>
             <p className="eyebrow">Discovery sources</p>
-            <h1>Sources and connections</h1>
-            <p>Check coverage, resolve source issues, and inspect verified graph paths.</p>
+            <h1>Sources</h1>
+            <p>Choose where discovery runs and see whether each source is working.</p>
           </div>
         </header>
-        <SignalsConsole
-          edges={graph.edges}
+        <SignalsConsole dataMode={data.dataMode} sources={sources} />
+        <SourceConfigEditor
           dataMode={data.dataMode}
-          nodes={graph.nodes}
-          sources={data.sources.map(toSource)}
+          sources={sources}
         />
       </div>
     </main>

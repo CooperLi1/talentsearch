@@ -2,14 +2,13 @@
 
 import { CandidateActions } from "@/components/candidates/candidate-actions";
 import { SiteNav } from "@/components/site-nav";
+import type { OperatorBriefFact } from "@/lib/candidates/operator-brief";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import {
   AlertTriangle,
   ArrowUpRight,
   CheckCircle2,
-  Clock3,
-  Network,
   Search,
   SlidersHorizontal,
 } from "lucide-react";
@@ -17,100 +16,49 @@ import Link from "next/link";
 import { useRef } from "react";
 
 export type DashboardCandidateView = {
-  confidence: number;
-  domains: string[];
-  evidence: {
-    date: string;
-    source: string;
-    title: string;
-    url: string;
-  } | null;
-  graphReason: string | null;
-  headline: string;
+  facts: OperatorBriefFact[];
   id: string;
-  identityWarning: string | null;
-  initials: string;
-  location: string;
   name: string;
-  recency: string;
-  score: number;
+  referralDisabled: boolean;
   slug: string;
-  stage: string;
   status: string;
-  unusualReason: string;
-  whyNow: string;
 };
 
-function QueueRow({ candidate }: { candidate: DashboardCandidateView }) {
+function QueueRow({ candidate, rank }: { candidate: DashboardCandidateView; rank: number }) {
   return (
     <article className="queue-row">
-      <div className="identity-mark" aria-hidden="true">
-        {candidate.initials}
-      </div>
+      <span className="queue-rank" aria-label={`Rank ${rank}`}>{String(rank).padStart(2, "0")}</span>
 
       <div className="queue-person">
         <div className="queue-name-line">
-          <h2>{candidate.name}</h2>
+          <h2><Link href={`/people/${candidate.slug}`}>{candidate.name}</Link></h2>
           <span className={`status-token status-${candidate.status}`}>
             {candidate.status}
           </span>
         </div>
-        <p className="queue-stage">
-          {[candidate.stage, candidate.location].filter(Boolean).join(" · ") ||
-            "Stage and location not verified"}
-        </p>
-        <p className="queue-thesis">{candidate.headline}</p>
-        <div className="queue-tags" aria-label="Candidate focus areas">
-          {candidate.domains.slice(0, 3).map((domain) => (
-            <span key={domain}>{domain}</span>
-          ))}
-        </div>
       </div>
 
-      <div className="queue-reason">
-        <span className="queue-cell-label">Why surfaced now · {candidate.recency}</span>
-        <p>{candidate.whyNow}</p>
-        {candidate.evidence ? (
-          <a
-            className="queue-evidence-link"
-            href={candidate.evidence.url}
-            rel="noreferrer"
-            target="_blank"
-          >
-            <strong>{candidate.evidence.title}</strong>
-            <span>{candidate.evidence.source} · {candidate.evidence.date}</span>
-            <ArrowUpRight aria-hidden="true" />
-          </a>
-        ) : (
-          <span className="queue-evidence-missing">No source link attached yet</span>
-        )}
-      </div>
-
-      <div className="queue-proof">
-        <span className="queue-cell-label">Why it stands out</span>
-        <p>{candidate.unusualReason}</p>
-        {candidate.graphReason ? (
-          <span className="queue-graph-reason">
-            <Network aria-hidden="true" /> {candidate.graphReason}
-          </span>
-        ) : null}
-        {candidate.identityWarning ? (
-          <span className="identity-warning">
-            <AlertTriangle aria-hidden="true" /> {candidate.identityWarning}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="queue-score">
-        <strong>{candidate.score.toFixed(1)}</strong>
-        <small>Review score</small>
-        <span>Identity confidence {Math.round(candidate.confidence * 100)}%</span>
-      </div>
+      <ul className="queue-facts">
+        {candidate.facts.map((fact, factIndex) => (
+          <li key={`${candidate.id}-fact-${factIndex}`}>
+            <span>{fact.text}</span>
+            {fact.sources.length ? (
+              <span className="queue-fact-sources" aria-label="Sources">
+                {fact.sources.map((source) => (
+                  <a href={source.url} key={source.url} rel="noreferrer" target="_blank">
+                    {source.label}<ArrowUpRight aria-hidden="true" />
+                  </a>
+                ))}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
 
       <div className="queue-actions">
         <CandidateActions
           candidateId={candidate.id}
-          referralDisabled={Boolean(candidate.identityWarning) || /high.?school|minor/i.test(candidate.stage)}
+          referralDisabled={candidate.referralDisabled}
           status={candidate.status}
         />
         <Link className="queue-open" href={`/people/${candidate.slug}`}>
@@ -129,16 +77,13 @@ export function Dashboard({
   dataMode: "empty" | "live" | "unconfigured";
 }) {
   const root = useRef<HTMLElement>(null);
-  const identityChecks = candidates.filter((candidate) => candidate.identityWarning).length;
-  const newCandidates = candidates.filter((candidate) => candidate.status === "new").length;
-  const verifiedCandidates = candidates.filter((candidate) => candidate.confidence >= 0.9).length;
 
   useGSAP(
     () => {
       const media = gsap.matchMedia();
       media.add("(prefers-reduced-motion: no-preference)", () => {
         const headerItems = root.current?.querySelectorAll(
-          ".operator-header > *, .queue-summary > *",
+          ".operator-header > *",
         );
         const queueRows = root.current?.querySelectorAll(".queue-row");
         if (headerItems?.length) {
@@ -175,8 +120,7 @@ export function Dashboard({
             <p className="eyebrow">Weekly review</p>
             <h1>Candidate queue</h1>
             <p>
-              New evidence, ordered for review. Verify the source, make a decision,
-              and move on.
+              The strongest recently discovered people, ordered for review.
             </p>
           </div>
           <div className="operator-header-actions">
@@ -186,30 +130,11 @@ export function Dashboard({
           </div>
         </header>
 
-        <section className="queue-summary" aria-label="Queue summary">
-          <div>
-            <span>Ready to review</span>
-            <strong>{candidates.length}</strong>
-          </div>
-          <div>
-            <span>New</span>
-            <strong>{newCandidates}</strong>
-          </div>
-          <div>
-            <span>High-confidence identity</span>
-            <strong>{verifiedCandidates}</strong>
-          </div>
-          <div className={identityChecks ? "summary-attention" : ""}>
-            <span>Identity checks</span>
-            <strong>{identityChecks}</strong>
-          </div>
-        </section>
-
         <section className="review-queue" id="candidates" aria-labelledby="queue-heading">
           <header className="queue-toolbar">
             <div>
               <h2 id="queue-heading">Review in order</h2>
-              <span>{candidates.length ? "Highest-priority evidence first" : "No candidates waiting"}</span>
+              <span>{candidates.length ? `${candidates.length} ${candidates.length === 1 ? "person" : "people"}` : "No candidates waiting"}</span>
             </div>
             <Link href="/settings">
               <SlidersHorizontal aria-hidden="true" /> Review criteria
@@ -218,8 +143,8 @@ export function Dashboard({
 
           {candidates.length ? (
             <div className="queue-list">
-              {candidates.map((candidate) => (
-                <QueueRow candidate={candidate} key={candidate.id} />
+              {candidates.map((candidate, index) => (
+                <QueueRow candidate={candidate} key={candidate.id} rank={index + 1} />
               ))}
             </div>
           ) : dataMode === "unconfigured" ? (
@@ -246,7 +171,7 @@ export function Dashboard({
                 <CheckCircle2 aria-hidden="true" />
               </div>
               <div>
-                <h2>The queue is clear.</h2>
+                <h2>No candidates are waiting.</h2>
                 <p>
                   Run discovery to look for new evidence, or broaden the criteria if
                   the current cutoff is too selective.
@@ -261,10 +186,6 @@ export function Dashboard({
           )}
         </section>
 
-        <footer className="operator-footer">
-          <span><Clock3 aria-hidden="true" /> Verify identity and evidence before contact</span>
-          <Link href="/signals">Review source coverage <ArrowUpRight aria-hidden="true" /></Link>
-        </footer>
       </div>
     </main>
   );

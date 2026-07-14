@@ -14,6 +14,8 @@ import { stableHash } from "./idempotency";
 const SOURCE_KIND_SET = new Set<string>(SOURCE_KINDS);
 const STRONG_EDGE_WEIGHT = 0.78;
 const REPEATED_COAUTHOR_WEIGHT = 0.34;
+const REPEATED_COLLABORATION_WEIGHT = 0.9;
+const REPEATED_ENGAGEMENT_WEIGHT = 0.72;
 
 type GraphEdgeRecord = {
   edge: GraphEdge;
@@ -125,6 +127,8 @@ function confidenceForGraphSupport(input: {
   distinctSources: number;
   strongEdge: boolean;
   repeatedCoauthor: boolean;
+  repeatedCollaboration: boolean;
+  repeatedEngagement: boolean;
   relationCount: number;
 }) {
   let confidence = 0.58;
@@ -133,6 +137,8 @@ function confidenceForGraphSupport(input: {
   }
   if (input.strongEdge) confidence += 0.08;
   if (input.repeatedCoauthor) confidence += 0.07;
+  if (input.repeatedCollaboration) confidence += 0.06;
+  if (input.repeatedEngagement) confidence += 0.04;
   confidence += Math.min(0.04, Math.max(0, input.relationCount - 1) * 0.02);
   return Math.min(0.82, Math.round(confidence * 1_000) / 1_000);
 }
@@ -228,7 +234,23 @@ export function graphEdgesToCandidateEvents(input: {
       .reduce((sum, record) => sum + Math.max(0, record.edge.weight), 0);
     const strongEdge = maxWeight >= STRONG_EDGE_WEIGHT;
     const repeatedCoauthor = coauthorWeight >= REPEATED_COAUTHOR_WEIGHT;
-    if (distinctSources < 2 && !strongEdge && !repeatedCoauthor) continue;
+    const collaborationWeight = supports
+      .filter((record) =>
+        ["collaborates_with", "contributes_to"].includes(record.edge.relation),
+      )
+      .reduce((sum, record) => sum + Math.max(0, record.edge.weight), 0);
+    const engagementWeight = supports
+      .filter((record) => record.edge.relation === "engages_with")
+      .reduce((sum, record) => sum + Math.max(0, record.edge.weight), 0);
+    const repeatedCollaboration = collaborationWeight >= REPEATED_COLLABORATION_WEIGHT;
+    const repeatedEngagement = engagementWeight >= REPEATED_ENGAGEMENT_WEIGHT;
+    if (
+      distinctSources < 2 &&
+      !strongEdge &&
+      !repeatedCoauthor &&
+      !repeatedCollaboration &&
+      !repeatedEngagement
+    ) continue;
 
     const relations = [...new Set(supports.map((record) => record.edge.relation))].sort();
     const targetKeys = [...new Set(supports.flatMap((record) => record.targetKeys))].sort();
@@ -254,11 +276,17 @@ export function graphEdgesToCandidateEvents(input: {
         ? `${distinctSources} distinct public identities point to this person through ${relationText}.`
         : repeatedCoauthor
           ? `Repeated public coauthor evidence points to this person.`
+          : repeatedCollaboration
+            ? `Repeated public collaboration evidence points to this person.`
+            : repeatedEngagement
+              ? `Repeated substantive public interactions point to this person.`
           : `A strong public ${relationText} connection points to this person.`;
     const confidence = confidenceForGraphSupport({
       distinctSources,
       strongEdge,
       repeatedCoauthor,
+      repeatedCollaboration,
+      repeatedEngagement,
       relationCount: relations.length,
     });
     const anchorHash = stableHash("graph-target-v1", identityAnchor);
@@ -284,6 +312,16 @@ export function graphEdgesToCandidateEvents(input: {
           0,
         ),
       },
+      raw: {
+        graphPath: supports.slice(0, 12).map((record) => ({
+          sourceProvider: record.edge.source.provider,
+          sourceExternalId: record.edge.source.externalId,
+          relation: record.edge.relation,
+          targetIdentities: record.targetKeys,
+          evidenceUrl: asPublicUrl(record.edge.sourceUrl),
+          weight: Math.min(1, Math.max(0, record.edge.weight)),
+        })),
+      },
       tags: ["graph-discovery", ...relations.map((relation) => `relation:${relation}`)],
       confidence,
     });
@@ -292,6 +330,8 @@ export function graphEdgesToCandidateEvents(input: {
   return events
     .sort(
       (left, right) =>
+        (right.metrics?.graphSupportWeight ?? 0) -
+          (left.metrics?.graphSupportWeight ?? 0) ||
         right.confidence - left.confidence ||
         left.idempotencyKey.localeCompare(right.idempotencyKey),
     )
@@ -299,10 +339,12 @@ export function graphEdgesToCandidateEvents(input: {
 }
 
 function personKey(person: PersonObservation) {
-  const identity = person.identities.find((item) => item.verified) ?? person.identities[0];
+  const identity = person.identities.find(
+    (item) => item.provider !== "email" && item.verified === true && item.externalId.trim(),
+  );
   return identity
     ? `${identity.provider}:${identity.externalId.toLocaleLowerCase("en-US")}`
-    : `name:${person.displayName.toLocaleLowerCase("en-US")}`;
+    : null;
 }
 
 export async function expandDiscoveryGraph(input: {
@@ -312,16 +354,20 @@ export async function expandDiscoveryGraph(input: {
   now?: Date;
   maxDepth?: number;
   maxNodes?: number;
+  maxEdgesPerSeed?: number;
   signal?: AbortSignal;
 }): Promise<{ nodes: PersonObservation[]; edges: GraphEdge[]; warnings: string[] }> {
   const now = input.now ?? new Date();
   const maxDepth = Math.min(3, Math.max(0, input.maxDepth ?? 1));
   const maxNodes = Math.min(1_000, Math.max(0, input.maxNodes ?? 200));
-  const seen = new Set(input.seeds.map(personKey));
-  const nodes = [...input.seeds];
+  const maxEdgesPerSeed = Math.min(100, Math.max(1, input.maxEdgesPerSeed ?? 60));
+  const maxEdges = Math.min(4_000, maxNodes * 5);
+  const verifiedSeeds = input.seeds.filter((person) => personKey(person));
+  const seen = new Set(verifiedSeeds.map(personKey).filter((key): key is string => Boolean(key)));
+  const nodes = [...verifiedSeeds];
   const edges: GraphEdge[] = [];
   const warnings: string[] = [];
-  let frontier = [...input.seeds];
+  let frontier = [...verifiedSeeds];
 
   for (let depth = 0; depth < maxDepth && frontier.length && nodes.length < maxNodes; depth += 1) {
     const expanded = await mapLimit(frontier, 3, async (person) => {
@@ -347,13 +393,47 @@ export async function expandDiscoveryGraph(input: {
           );
         }
       }
-      return sourceEdges;
+      return sourceEdges
+        .filter((edge) => personKey(edge.target))
+        .sort(
+          (left, right) =>
+            right.weight - left.weight ||
+            left.relation.localeCompare(right.relation) ||
+            left.sourceUrl.localeCompare(right.sourceUrl),
+        )
+        .slice(0, maxEdgesPerSeed);
     });
     const next: PersonObservation[] = [];
-    for (const edge of expanded.flat()) {
+    const depthEdges = expanded
+      .flat()
+      .filter((edge) => personKey(edge.target))
+      .sort(
+        (left, right) =>
+          right.weight - left.weight ||
+          left.relation.localeCompare(right.relation) ||
+          left.sourceUrl.localeCompare(right.sourceUrl),
+      )
+      .slice(0, Math.max(0, maxEdges - edges.length));
+    const targetSupport = new Map<string, { weight: number; sources: Set<string> }>();
+    for (const edge of depthEdges) {
+      const key = personKey(edge.target)!;
+      const support = targetSupport.get(key) ?? { weight: 0, sources: new Set<string>() };
+      support.weight += Math.max(0, edge.weight);
+      const sourceKey = sourceIdentityKey(edge.source);
+      if (sourceKey) support.sources.add(sourceKey);
+      targetSupport.set(key, support);
+    }
+    for (const edge of depthEdges) {
       edges.push(edge);
-      const key = personKey(edge.target);
-      if (!seen.has(key) && nodes.length + next.length < maxNodes) {
+      const key = personKey(edge.target)!;
+      const support = targetSupport.get(key)!;
+      const safeToExpandFurther =
+        edge.weight >= 0.6 || support.sources.size >= 2 || support.weight >= 0.9;
+      if (
+        safeToExpandFurther &&
+        !seen.has(key) &&
+        nodes.length + next.length < maxNodes
+      ) {
         seen.add(key);
         next.push(edge.target);
       }

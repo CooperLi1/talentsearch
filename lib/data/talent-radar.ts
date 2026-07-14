@@ -9,14 +9,25 @@ import type {
   CandidateStatus,
   CriterionProfile,
   CriterionSignal,
+  DigestCadence,
   DashboardData,
   DigestSubscriber,
   DiscoverySource,
+  EditableManualProfile,
+  EditableSourceConfiguration,
+  EditableSourceOptions,
+  EditableStructuredSourcePage,
   EvidenceLink,
   TalentEvent,
 } from "@/lib/domain/types";
+import {
+  contactRoutesFromIdentities,
+  contactRoutesFromJson,
+  normalizeContactRoutes,
+} from "@/lib/contact/routes";
 import { getAdminSupabaseClient, hasSupabaseAdminEnv } from "@/lib/supabase/admin";
 import { assertPublicHttpUrl, isBlockedIp, sanitizePlainText } from "@/lib/discovery/security";
+import { isLinkedInDirectAccessApproved } from "@/lib/discovery/linkedin-policy";
 import type { CandidateRow, CriterionProfileRow, DigestItemRow, DigestRow, DigestSubscriberRow, EventRow, Json, SourceRow } from "@/lib/supabase/database.types";
 
 import type {
@@ -39,10 +50,12 @@ import type {
   RankedCandidate,
   RecordCandidateFeedbackInput,
   ReviewIdentityCandidateInput,
+  SourceConfigurationUpdate,
   SourceRecord,
   SubscriberDeliveryUpdate,
   TasteFeedbackRecord,
   UpdateSourceEnabledResult,
+  UpdateSourceConfigurationResult,
   UpdateCandidateIntelligenceInput,
   UpdateDigestDeliveryInput,
   UpdateIngestionRunInput,
@@ -84,14 +97,55 @@ function db() {
   return getAdminSupabaseClient();
 }
 
-function fail(error: { message: string } | null) {
-  if (error) throw new Error(error.message);
+function fail(error: { code?: string; message: string } | null) {
+  if (!error) return;
+  if (
+    error.code === "PGRST205" ||
+    /could not find the table ['"]public\.[^'"]+['"] in the schema cache/i.test(error.message)
+  ) {
+    throw new DataNotConfiguredError();
+  }
+  throw new Error(error.message);
 }
 
 function record(value: Json | unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function parseDigestCadence(value: unknown): DigestCadence {
+  return value === "daily" ||
+    value === "twice_weekly" ||
+    value === "biweekly"
+    ? value
+    : "weekly";
+}
+
+function parseMinimumScore(value: unknown) {
+  const score = Number(value);
+  if (score === 62) return 12;
+  if (score === 55 || score === 75) return 18;
+  if (score === 86) return 28;
+  return Number.isFinite(score) ? Math.min(100, Math.max(0, score)) : 18;
+}
+
+function observationWindow(
+  seenAt: string | undefined,
+  existingFirstSeenAt?: unknown,
+  existingLastSeenAt?: unknown,
+) {
+  const now = new Date().toISOString();
+  const requested = seenAt ?? now;
+  const safeSeenAt = Number.isFinite(new Date(requested).getTime()) ? requested : now;
+  const timestamps = [safeSeenAt, existingFirstSeenAt, existingLastSeenAt]
+    .map((value) => String(value ?? ""))
+    .filter((value) => Number.isFinite(new Date(value).getTime()))
+    .sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+  return {
+    firstSeenAt: timestamps[0] ?? safeSeenAt,
+    lastSeenAt: timestamps.at(-1) ?? safeSeenAt,
+  };
 }
 
 function normalizedName(value: string) {
@@ -157,6 +211,36 @@ function mergeUniqueText(existing: unknown, incoming: string[] | undefined, limi
   return merged;
 }
 
+function mergeObservedNames(
+  existing: unknown,
+  incoming: MergeCandidateObservationInput["alternateNames"],
+  canonicalName: string,
+  limit = 20,
+) {
+  const values = [
+    ...(Array.isArray(existing) ? existing : []),
+    ...(incoming ?? []),
+  ];
+  const canonicalKey = normalizedName(canonicalName);
+  const strongest = new Map<string, { name: string; sourceUrl: string; confidence: number; proof: string }>();
+  for (const value of values) {
+    const item = record(value);
+    const name = sanitizePlainText(item.name, 200);
+    const key = normalizedName(name);
+    const sourceUrl = safeStoredHttpUrl(item.sourceUrl);
+    const confidence = Math.max(0, Math.min(1, Number(item.confidence ?? 0)));
+    const proof = sanitizePlainText(item.proof, 100);
+    if (!name || !key || key === canonicalKey || !sourceUrl || confidence < 0.6 || !proof) continue;
+    const current = strongest.get(key);
+    if (!current || confidence > current.confidence) {
+      strongest.set(key, { name, sourceUrl, confidence, proof });
+    }
+  }
+  return [...strongest.values()]
+    .sort((left, right) => right.confidence - left.confidence || left.name.localeCompare(right.name))
+    .slice(0, limit);
+}
+
 function mergeUniqueUrls(existing: unknown, incoming: string[] | undefined, limit = 20) {
   const values = Array.isArray(existing) ? existing : [];
   const merged: string[] = [];
@@ -202,9 +286,14 @@ const emptyCriterion: CriterionProfile = {
   lookForMarkdown: "",
   avoidMarkdown: "",
   signals: [],
-  minimumScore: 55,
+  minimumScore: 25,
   minimumConfidence: 0.6,
   weeklyCandidateCount: 12,
+  digestCadence: "weekly",
+  digestDaysOfWeek: [1],
+  digestDeliveryHourUtc: 15,
+  digestDeliveryMinuteUtc: 0,
+  digestPreparationLeadHours: 3,
   explorationRate: 0.1,
   learningRate: 0.01,
   lastLearnedAt: null,
@@ -239,6 +328,7 @@ function providerLabel(value: unknown) {
     gitlab: "GitLab",
     openalex: "OpenAlex",
     "semantic-scholar": "Semantic Scholar",
+    "hugging-face": "Hugging Face",
     codeforces: "Codeforces",
     x: "X",
   };
@@ -332,6 +422,35 @@ function mapConnections(
 }
 
 function mapEvent(row: EventRow, evidence: Array<Record<string, unknown>>): TalentEvent {
+  const raw = record(row.raw_payload);
+  const rawMetrics = record(raw.metrics);
+  const complexity = record(raw.technicalComplexity);
+  const components = record(complexity.components);
+  const componentWeight: Record<string, number> = {
+    sourceSurface: 0.2,
+    languageBreadth: 0.1,
+    testsAndCi: 0.15,
+    systemsAndResearch: 0.16,
+    authoredCodeRatio: 0.1,
+    historyDepth: 0.1,
+    contributorShape: 0.06,
+    documentationAndBenchmarks: 0.08,
+    hardConstraintMatch: 0.02,
+    tractionCorroboration: 0.03,
+  };
+  const reconstructedComplexity = Object.entries(componentWeight).reduce(
+    (total, [key, weight]) => total + Math.max(0, Math.min(1, Number(components[key]) || 0)) * weight,
+    0,
+  ) * (Number(components.hardConstraintMatch) > 0 ? 1 : 0.72);
+  const metrics = Object.fromEntries(
+    Object.entries(rawMetrics)
+      .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])),
+  );
+  const technicalComplexity = Number(complexity.score) || reconstructedComplexity;
+  if (technicalComplexity > 0) {
+    metrics.technicalComplexity = technicalComplexity;
+    metrics.technicalComplexityConfidence = Number(complexity.confidence) || 0.72;
+  }
   const links = evidence
     .filter((item) => String(item.event_id) === String(row.id))
     .map((item) => ({
@@ -346,6 +465,7 @@ function mapEvent(row: EventRow, evidence: Array<Record<string, unknown>>): Tale
     type: row.event_type,
     title: row.title,
     summaryMarkdown: row.summary_md,
+    evidenceExcerpt: row.evidence_excerpt ?? undefined,
     whyItMattersMarkdown: row.why_it_matters_md,
     occurredAt: row.occurred_at,
     discoveredAt: row.discovered_at,
@@ -354,6 +474,11 @@ function mapEvent(row: EventRow, evidence: Array<Record<string, unknown>>): Tale
     confidence: Number(row.confidence),
     novelty: Number(row.novelty_score),
     significance: Number(row.significance_score),
+    metrics,
+    tags: Array.isArray(raw.tags)
+      ? raw.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 30)
+      : [],
+    raw,
     links: links.length
       ? links
       : [{ label: row.source_label, url: row.source_url, kind: "primary" }],
@@ -373,6 +498,7 @@ function mapCandidate(row: CandidateRow, related: RelatedRows): Candidate {
     .map((identity) => ({
       id: String(identity.id),
       provider: String(identity.provider),
+      providerSubjectId: String(identity.provider_subject_id ?? identity.id),
       handle: identity.handle ? String(identity.handle) : undefined,
       profileUrl: identity.profile_url ? String(identity.profile_url) : undefined,
       displayName: String(identity.display_name ?? row.canonical_name),
@@ -381,6 +507,26 @@ function mapCandidate(row: CandidateRow, related: RelatedRows): Candidate {
       distinguishingFacts: Object.keys(record(identity.distinguishing_facts)),
       ambiguityKey: identity.ambiguity_key ? String(identity.ambiguity_key) : undefined,
     }));
+  const websiteUrl = safeStoredHttpUrl(attributes.websiteUrl);
+  const biography = sanitizePlainText(attributes.biography, 2_000) || undefined;
+  const affiliations = mergeUniqueText(attributes.affiliations, row.school ? [row.school] : []);
+  const alternateNames = mergeObservedNames(
+    attributes.alternateNames,
+    undefined,
+    row.canonical_name,
+  );
+  const contactSafetyContext = [
+    row.stage,
+    row.school,
+    ...events.flatMap((event) => [event.type, event.title, event.sourceLabel]),
+  ].filter(Boolean).join(" ");
+  const contactRoutes = normalizeContactRoutes(
+    [
+      ...contactRoutesFromJson(attributes.publicContactRoutes),
+      ...contactRoutesFromIdentities(identities, websiteUrl),
+    ],
+    contactSafetyContext,
+  );
   return {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
@@ -388,11 +534,13 @@ function mapCandidate(row: CandidateRow, related: RelatedRows): Candidate {
     name: row.canonical_name,
     initials: initials(row.canonical_name),
     avatarUrl: row.avatar_url ?? undefined,
-    websiteUrl: safeStoredHttpUrl(attributes.websiteUrl),
+    websiteUrl,
     headline: row.headline ?? "",
+    biography,
     location: row.location ?? "",
     stage: row.stage ?? "",
     school: row.school ?? undefined,
+    affiliations,
     domains: row.domains ?? [],
     score: Number(row.score),
     momentum: Number(row.momentum),
@@ -400,11 +548,14 @@ function mapCandidate(row: CandidateRow, related: RelatedRows): Candidate {
     confidenceBand: confidenceBand(Number(row.confidence)),
     status: row.status as CandidateStatus,
     summaryMarkdown: row.summary_md,
+    briefPolicyVersion: row.brief_prompt_version,
     whyNowMarkdown: row.why_now_md,
     earlynessMarkdown: row.earlyness_md,
     latestEvent: events[0] ?? null,
     events,
     identities,
+    alternateNames,
+    contactRoutes,
     connections: mapConnections(row.id, candidateIdentityRows, related),
     sourceCount: row.source_count,
     firstSeenAt: row.first_seen_at,
@@ -490,11 +641,18 @@ export async function searchCandidates(
 ) {
   if (!hasSupabaseAdminEnv()) return [];
   const limit = Math.min(100, options.limit ?? 20);
+  const hasPostFilters = Boolean(
+    options.statuses?.length ||
+      options.careerStages?.length ||
+      options.eventTypes?.length ||
+      options.locations?.length ||
+      options.sources?.length,
+  );
   const { data, error } = await db().rpc("hybrid_search_candidates", {
     p_workspace_id: workspaceId(workspace),
     p_query_text: queryText,
     p_query_embedding: options.embedding ?? null,
-    p_match_count: limit,
+    p_match_count: hasPostFilters ? 100 : limit,
     p_semantic_weight: options.embedding ? (options.semanticWeight ?? 0.65) : 0,
     p_domains: options.domains ?? null,
   });
@@ -520,7 +678,329 @@ export async function searchCandidates(
         },
       });
   }
-  return ordered.filter((candidate) => candidate.score >= (options.minimumScore ?? 0));
+  const normalizedSet = (values: string[] | undefined) =>
+    new Set(
+      (values ?? [])
+        .map((value) => value.trim().toLocaleLowerCase("en-US"))
+        .filter(Boolean),
+    );
+  const statuses = new Set(options.statuses ?? []);
+  const stages = normalizedSet(options.careerStages);
+  const locations = normalizedSet(options.locations);
+  const eventTypes = normalizedSet(options.eventTypes);
+  const sources = normalizedSet(options.sources);
+  return ordered
+    .filter((candidate) => candidate.score >= (options.minimumScore ?? 0))
+    .filter((candidate) => !statuses.size || statuses.has(candidate.status))
+    .filter(
+      (candidate) =>
+        !stages.size || stages.has(candidate.stage.trim().toLocaleLowerCase("en-US")),
+    )
+    .filter(
+      (candidate) =>
+        !locations.size ||
+        locations.has(candidate.location.trim().toLocaleLowerCase("en-US")),
+    )
+    .filter(
+      (candidate) =>
+        !eventTypes.size ||
+        candidate.events.some((event) =>
+          eventTypes.has(event.type.trim().toLocaleLowerCase("en-US")),
+        ),
+    )
+    .filter(
+      (candidate) =>
+        !sources.size ||
+        candidate.events.some((event) =>
+          sources.has(event.sourceLabel.trim().toLocaleLowerCase("en-US")),
+        ),
+    )
+    .slice(0, limit);
+}
+
+const QUERY_LIMITS = new Map<string, number>([
+  ["github", 8],
+  ["gitlab", 8],
+  ["openalex", 8],
+  ["crossref", 8],
+  ["arxiv", 8],
+  ["semantic-scholar", 8],
+  ["hugging-face", 8],
+  ["x", 8],
+]);
+
+const URL_SOURCE_KINDS = new Set([
+  "rss",
+  "technical-blogs",
+  "project-launches",
+  "web-presence",
+]);
+
+const STRUCTURED_SOURCE_KINDS = new Set([
+  "structured-results",
+  "competition-results",
+  "science-fairs",
+  "hackathons",
+]);
+
+const LOOKBACK_SETTINGS = new Map<string, { defaultValue: number; maximum: number }>([
+  ["github", { defaultValue: 14, maximum: 90 }],
+  ["gitlab", { defaultValue: 14, maximum: 90 }],
+  ["openalex", { defaultValue: 21, maximum: 365 }],
+  ["crossref", { defaultValue: 21, maximum: 365 }],
+  ["hugging-face", { defaultValue: 30, maximum: 365 }],
+]);
+
+const MAX_ITEMS_BY_KIND = new Map<string, number>([
+  ["github", 100],
+  ["gitlab", 100],
+  ["openalex", 200],
+  ["crossref", 200],
+  ["arxiv", 150],
+  ["semantic-scholar", 100],
+  ["hugging-face", 75],
+  ["codeforces", 100],
+  ["hacker-news", 100],
+  ["rss", 250],
+  ["technical-blogs", 250],
+  ["project-launches", 250],
+  ["structured-results", 500],
+  ["competition-results", 500],
+  ["science-fairs", 500],
+  ["hackathons", 500],
+  ["web-presence", 200],
+  ["x", 100],
+  ["linkedin-manual", 100],
+  ["brave-enrichment", 8],
+]);
+
+const OPTION_KEYS_BY_KIND = new Map<string, ReadonlySet<keyof EditableSourceOptions>>([
+  ["github", new Set(["complexityKeywords"])],
+  ["gitlab", new Set(["complexityKeywords"])],
+  ["codeforces", new Set(["maxContests"])],
+  [
+    "hacker-news",
+    new Set(["feed", "minimumScore", "topicKeywords", "requireTopicMatch"]),
+  ],
+  ["brave-enrichment", new Set(["maxQueries", "maxResults"])],
+  ["structured-results", new Set(["pages"])],
+  ["competition-results", new Set(["pages"])],
+  ["science-fairs", new Set(["pages"])],
+  ["hackathons", new Set(["pages"])],
+  ["linkedin-manual", new Set(["profiles"])],
+]);
+
+function cleanOptionalText(value: unknown, maximum: number) {
+  if (typeof value !== "string") return undefined;
+  return sanitizePlainText(value, maximum) || undefined;
+}
+
+function cleanStringArray(value: unknown, limit: number, itemMaximum = 300) {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    const cleaned = cleanOptionalText(candidate, itemMaximum);
+    if (!cleaned) continue;
+    const key = cleaned.toLocaleLowerCase("en-US");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function safeEditableConfigUrl(value: unknown) {
+  const normalized = safeStoredHttpUrl(value);
+  if (!normalized) return undefined;
+  const url = new URL(normalized);
+  const hostname = url.hostname
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "")
+    .toLocaleLowerCase("en-US");
+  const mappedIpv4 = hostname.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  if (
+    (!hostname.includes(".") && isIP(hostname) === 0) ||
+    hostname.endsWith(".lan") ||
+    hostname.endsWith(".home") ||
+    hostname.endsWith(".home.arpa") ||
+    (mappedIpv4 && isBlockedIp(mappedIpv4))
+  ) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function safeSelectorFromStorage(value: unknown) {
+  const selector = cleanOptionalText(value, 160);
+  if (
+    !selector ||
+    /[\u0000-\u001f\u007f{};]/u.test(selector) ||
+    /:(?:has|contains|matches)\s*\(/iu.test(selector)
+  ) {
+    return undefined;
+  }
+  return selector;
+}
+
+const STRUCTURED_EVENT_TYPES = new Set([
+  "competition_result",
+  "hackathon_result",
+  "fellowship_or_grant",
+  "community_recognition",
+]);
+
+function safeStructuredPages(value: unknown): EditableStructuredSourcePage[] {
+  if (!Array.isArray(value)) return [];
+  const pages: EditableStructuredSourcePage[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    const page = record(candidate);
+    const url = safeEditableConfigUrl(page.url);
+    const itemSelector = safeSelectorFromStorage(page.itemSelector);
+    const nameSelector = safeSelectorFromStorage(page.nameSelector);
+    if (!url || !itemSelector || !nameSelector || seen.has(url)) continue;
+    seen.add(url);
+    const eventType = String(page.eventType ?? "");
+    const titleSelector = safeSelectorFromStorage(page.titleSelector);
+    const descriptionSelector = safeSelectorFromStorage(page.descriptionSelector);
+    const linkSelector = safeSelectorFromStorage(page.linkSelector);
+    const dateSelector = safeSelectorFromStorage(page.dateSelector);
+    const rankSelector = safeSelectorFromStorage(page.rankSelector);
+    const affiliationSelector = safeSelectorFromStorage(page.affiliationSelector);
+    const eventName = cleanOptionalText(page.eventName, 200);
+    const occurredAt = cleanOptionalText(page.occurredAt, 50);
+    pages.push({
+      url,
+      itemSelector,
+      nameSelector,
+      ...(titleSelector ? { titleSelector } : {}),
+      ...(descriptionSelector ? { descriptionSelector } : {}),
+      ...(linkSelector ? { linkSelector } : {}),
+      ...(dateSelector ? { dateSelector } : {}),
+      ...(rankSelector ? { rankSelector } : {}),
+      ...(affiliationSelector ? { affiliationSelector } : {}),
+      ...(eventName ? { eventName } : {}),
+      ...(occurredAt && Number.isFinite(Date.parse(occurredAt)) ? { occurredAt } : {}),
+      ...(STRUCTURED_EVENT_TYPES.has(eventType)
+        ? { eventType: eventType as EditableStructuredSourcePage["eventType"] }
+        : {}),
+    });
+    if (pages.length >= 20) break;
+  }
+  return pages;
+}
+
+function safeManualProfiles(value: unknown): EditableManualProfile[] {
+  if (!Array.isArray(value)) return [];
+  const profiles: EditableManualProfile[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    const profile = record(candidate);
+    const name = cleanOptionalText(profile.name, 200);
+    const profileUrl = safeEditableConfigUrl(profile.profileUrl);
+    if (!name || !profileUrl || seen.has(profileUrl)) continue;
+    const profileLocation = new URL(profileUrl);
+    const hostname = profileLocation.hostname.toLocaleLowerCase("en-US");
+    if (
+      profileLocation.protocol !== "https:" ||
+      (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com")) ||
+      !/^\/in\/[^/]+\/?$/u.test(profileLocation.pathname)
+    ) {
+      continue;
+    }
+    seen.add(profileUrl);
+    const observedAt = cleanOptionalText(profile.observedAt, 50);
+    const headline = cleanOptionalText(profile.headline, 500);
+    const biography = cleanOptionalText(profile.biography, 2_000);
+    const location = cleanOptionalText(profile.location, 300);
+    const affiliations = cleanStringArray(profile.affiliations, 20);
+    const websiteUrl = safeEditableConfigUrl(profile.websiteUrl);
+    const note = cleanOptionalText(profile.note, 2_000);
+    const provenanceUrl = safeEditableConfigUrl(profile.provenanceUrl);
+    const reviewed = profile.reviewed === true;
+    profiles.push({
+      name,
+      profileUrl,
+      ...(headline ? { headline } : {}),
+      ...(biography ? { biography } : {}),
+      ...(location ? { location } : {}),
+      ...(affiliations.length ? { affiliations } : {}),
+      ...(websiteUrl ? { websiteUrl } : {}),
+      ...(observedAt && Number.isFinite(Date.parse(observedAt)) ? { observedAt } : {}),
+      ...(note ? { note } : {}),
+      ...(provenanceUrl ? { provenanceUrl } : {}),
+      reviewed,
+    });
+    if (profiles.length >= 100) break;
+  }
+  return profiles;
+}
+
+function finiteInteger(value: unknown, minimum: number, maximum: number) {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= minimum && numeric <= maximum
+    ? numeric
+    : undefined;
+}
+
+function safeSourceOptions(kind: string, value: unknown): EditableSourceOptions | undefined {
+  const options = record(value);
+  if (kind === "github" || kind === "gitlab") {
+    return { complexityKeywords: cleanStringArray(options.complexityKeywords, 30, 100) };
+  }
+  if (kind === "codeforces") {
+    return { maxContests: finiteInteger(options.maxContests, 1, 5) ?? 2 };
+  }
+  if (kind === "hacker-news") {
+    const feed = ["newstories", "beststories", "topstories", "showstories"].includes(
+      String(options.feed),
+    )
+      ? (options.feed as NonNullable<EditableSourceOptions["feed"]>)
+      : "newstories";
+    return {
+      feed,
+      minimumScore: finiteInteger(options.minimumScore, 0, 10_000) ?? 2,
+      topicKeywords: cleanStringArray(options.topicKeywords, 30, 100),
+      requireTopicMatch: options.requireTopicMatch === true,
+    };
+  }
+  if (kind === "brave-enrichment") {
+    return {
+      maxQueries: finiteInteger(options.maxQueries, 1, 5) ?? 5,
+      maxResults: finiteInteger(options.maxResults, 1, 12) ?? 8,
+    };
+  }
+  if (STRUCTURED_SOURCE_KINDS.has(kind)) {
+    return { pages: safeStructuredPages(options.pages) };
+  }
+  if (kind === "linkedin-manual") {
+    return { profiles: safeManualProfiles(options.profiles) };
+  }
+  return undefined;
+}
+
+function editableSourceConfiguration(row: SourceRow): EditableSourceConfiguration {
+  const stored = record(row.discovery_config);
+  const maximumItems = MAX_ITEMS_BY_KIND.get(row.kind) ?? 500;
+  const configuredItems = finiteInteger(row.max_requests_per_run, 1, maximumItems) ?? maximumItems;
+  const config: EditableSourceConfiguration = { maxItems: configuredItems };
+  const queryLimit = QUERY_LIMITS.get(row.kind);
+  if (queryLimit) config.queries = cleanStringArray(stored.queries, queryLimit, 300);
+  if (URL_SOURCE_KINDS.has(row.kind)) {
+    config.urls = cleanStringArray(stored.urls, 30, 2_000)
+      .map(safeEditableConfigUrl)
+      .filter((url): url is string => Boolean(url));
+  }
+  const lookback = LOOKBACK_SETTINGS.get(row.kind);
+  if (lookback) {
+    config.lookbackDays =
+      finiteInteger(stored.lookbackDays, 1, lookback.maximum) ?? lookback.defaultValue;
+  }
+  const options = safeSourceOptions(row.kind, stored.options);
+  if (options) config.options = options;
+  return config;
 }
 
 function mapSource(row: SourceRow): DiscoverySource {
@@ -531,16 +1011,17 @@ function mapSource(row: SourceRow): DiscoverySource {
     trustWeight: Number(row.trust_weight), cadence: interval >= 1440 ? "Daily" : `Every ${interval}m`,
     lastSuccessAt: row.last_success_at, nextRunAt: row.next_run_at,
     discoveredThisWeek: Number(record(row.health_metadata).discoveredThisWeek ?? 0),
+    config: editableSourceConfiguration(row),
   };
 }
 
 const PUBLIC_SOURCE_KINDS = new Set([
   "github",
   "gitlab",
-  "openalex",
   "crossref",
   "arxiv",
   "semantic-scholar",
+  "hugging-face",
   "codeforces",
   "hacker-news",
 ]);
@@ -551,24 +1032,9 @@ const FEED_SOURCE_KINDS = new Set([
   "project-launches",
 ]);
 
-const STRUCTURED_SOURCE_KINDS = new Set([
-  "structured-results",
-  "competition-results",
-  "science-fairs",
-  "hackathons",
-]);
-
 function hasConfiguredUrl(value: unknown) {
   if (!Array.isArray(value)) return false;
-  return value.some((candidate) => {
-    if (typeof candidate !== "string") return false;
-    try {
-      const url = new URL(candidate);
-      return url.protocol === "https:" || url.protocol === "http:";
-    } catch {
-      return false;
-    }
-  });
+  return value.some((candidate) => Boolean(safeEditableConfigUrl(candidate)));
 }
 
 function hasLinkedInProfile(value: unknown) {
@@ -576,8 +1042,15 @@ function hasLinkedInProfile(value: unknown) {
   return value.some((candidate) => {
     const profile = record(candidate);
     const name = typeof profile.name === "string" ? profile.name.trim() : "";
-    const profileUrl = typeof profile.profileUrl === "string" ? profile.profileUrl.trim() : "";
-    return Boolean(name) && /^https:\/\/(?:[a-z]+\.)?linkedin\.com\//i.test(profileUrl);
+    const profileUrl = safeEditableConfigUrl(profile.profileUrl);
+    if (!name || !profileUrl || profile.reviewed !== true) return false;
+    const parsed = new URL(profileUrl);
+    const hostname = parsed.hostname.toLocaleLowerCase("en-US");
+    return (
+      parsed.protocol === "https:" &&
+      (hostname === "linkedin.com" || hostname.endsWith(".linkedin.com")) &&
+      /^\/in\/[^/]+\/?$/u.test(parsed.pathname)
+    );
   });
 }
 
@@ -587,18 +1060,30 @@ function hasStructuredPage(value: unknown) {
     const page = record(candidate);
     return (
       hasConfiguredUrl([page.url]) &&
-      typeof page.itemSelector === "string" &&
-      Boolean(page.itemSelector.trim()) &&
-      typeof page.nameSelector === "string" &&
-      Boolean(page.nameSelector.trim())
+      Boolean(safeSelectorFromStorage(page.itemSelector)) &&
+      Boolean(safeSelectorFromStorage(page.nameSelector))
     );
   });
 }
 
 function sourceSetupRequirement(row: SourceRow) {
+  if (row.kind === "hugging-face") {
+    return cleanStringArray(record(row.discovery_config).queries, 8, 300).length
+      ? null
+      : ("hugging_face_queries" as const);
+  }
   if (PUBLIC_SOURCE_KINDS.has(row.kind)) return null;
+  if (row.kind === "openalex") {
+    return process.env.OPENALEX_API_KEY?.trim()
+      ? null
+      : ("openalex_connection" as const);
+  }
   if (row.kind === "x") {
-    return process.env.X_BEARER_TOKEN?.trim() ? null : ("x_connection" as const);
+    if (!process.env.X_BEARER_TOKEN?.trim()) return "x_connection" as const;
+    if (process.env.X_DATA_USE_APPROVED !== "true") return "x_data_use_approval" as const;
+    return cleanStringArray(record(row.discovery_config).queries, 8, 300).length
+      ? null
+      : ("x_queries" as const);
   }
   if (row.kind === "brave-enrichment") {
     return process.env.BRAVE_SEARCH_API_KEY?.trim()
@@ -612,7 +1097,9 @@ function sourceSetupRequirement(row: SourceRow) {
   const configuration = record(row.discovery_config);
   const options = record(configuration.options);
   if (row.kind === "linkedin-manual") {
-    return hasLinkedInProfile(options.profiles) ? null : ("linkedin_profiles" as const);
+    return hasLinkedInProfile(options.profiles) || isLinkedInDirectAccessApproved()
+      ? null
+      : ("linkedin_profiles" as const);
   }
   if (FEED_SOURCE_KINDS.has(row.kind)) {
     return hasConfiguredUrl(configuration.urls) ? null : ("feed_urls" as const);
@@ -628,6 +1115,163 @@ export async function listSources(workspace?: string | number) {
   const { data, error } = await db().from("sources").select("*").eq("workspace_id", workspaceId(workspace)).order("name");
   fail(error);
   return ((data ?? []) as SourceRow[]).map(mapSource);
+}
+
+function sourceConfigurationError(row: SourceRow, update: SourceConfigurationUpdate) {
+  const { kind } = row;
+  if (update.queries !== undefined) {
+    const limit = QUERY_LIMITS.get(kind);
+    if (!limit) return "Search queries are not supported for this source.";
+    if (update.queries.length > limit) {
+      return `This source supports at most ${limit} search queries.`;
+    }
+    if (kind === "hugging-face" && update.queries.length === 0) {
+      return "Add at least one Hugging Face topic.";
+    }
+  }
+  if (update.urls !== undefined && !URL_SOURCE_KINDS.has(kind)) {
+    return "Feed or site URLs are not supported for this source.";
+  }
+  if (update.lookbackDays !== undefined) {
+    const settings = LOOKBACK_SETTINGS.get(kind);
+    if (!settings) return "A lookback window is not supported for this source.";
+    if (update.lookbackDays > settings.maximum) {
+      return `This source supports a lookback window of at most ${settings.maximum} days.`;
+    }
+  }
+  const maximumItems = MAX_ITEMS_BY_KIND.get(kind) ?? 500;
+  if (update.maxItems !== undefined && update.maxItems > maximumItems) {
+    return `This source supports at most ${maximumItems} items per run.`;
+  }
+  if (update.options !== undefined) {
+    const allowed = OPTION_KEYS_BY_KIND.get(kind);
+    if (!allowed) return "Additional options are not supported for this source.";
+    const unsupported = Object.keys(update.options).find(
+      (key) => !allowed.has(key as keyof EditableSourceOptions),
+    );
+    if (unsupported) return `${unsupported} is not supported for this source.`;
+    const effectiveOptions = {
+      ...editableSourceConfiguration(row).options,
+      ...update.options,
+    };
+    if (
+      kind === "hacker-news" &&
+      effectiveOptions.requireTopicMatch === true &&
+      !effectiveOptions.topicKeywords?.length
+    ) {
+      return "Add at least one Hacker News topic before requiring a topic match.";
+    }
+  }
+  return null;
+}
+
+function urlsInConfigurationUpdate(update: SourceConfigurationUpdate) {
+  return [
+    ...(update.urls ?? []),
+    ...(update.options?.pages?.map((page) => page.url) ?? []),
+    ...(update.options?.profiles?.flatMap((profile) => [
+      profile.profileUrl,
+      ...(profile.websiteUrl ? [profile.websiteUrl] : []),
+      ...(profile.provenanceUrl ? [profile.provenanceUrl] : []),
+    ]) ?? []),
+  ];
+}
+
+async function validateConfigurationUrls(update: SourceConfigurationUpdate) {
+  const byHostname = new Map<string, string>();
+  for (const candidate of urlsInConfigurationUpdate(update)) {
+    try {
+      const url = new URL(candidate);
+      byHostname.set(url.hostname.toLocaleLowerCase("en-US"), candidate);
+    } catch {
+      return false;
+    }
+  }
+  try {
+    await Promise.all([...byHostname.values()].map((url) => assertPublicHttpUrl(url)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function mergeSourceConfiguration(
+  row: SourceRow,
+  update: SourceConfigurationUpdate,
+): EditableSourceConfiguration {
+  const merged = { ...editableSourceConfiguration(row) };
+  if (update.queries !== undefined) merged.queries = [...update.queries];
+  if (update.urls !== undefined) merged.urls = [...update.urls];
+  if (update.lookbackDays !== undefined) merged.lookbackDays = update.lookbackDays;
+  if (update.maxItems !== undefined) merged.maxItems = update.maxItems;
+  if (update.options !== undefined) {
+    merged.options = safeSourceOptions(row.kind, {
+      ...merged.options,
+      ...update.options,
+    }) ?? {};
+  }
+  return merged;
+}
+
+export async function updateSourceConfiguration(
+  workspace: string | number,
+  id: string | number,
+  update: SourceConfigurationUpdate,
+): Promise<UpdateSourceConfigurationResult> {
+  const sourceId = Number(id);
+  if (!Number.isSafeInteger(sourceId) || sourceId <= 0) {
+    throw new Error("Source id must be a positive integer");
+  }
+
+  const client = db();
+  const selected = await client
+    .from("sources")
+    .select("*")
+    .eq("workspace_id", workspaceId(workspace))
+    .eq("id", sourceId)
+    .maybeSingle();
+  fail(selected.error);
+  if (!selected.data) return { ok: false, reason: "not_found" };
+
+  const row = selected.data as SourceRow;
+  const configurationError = sourceConfigurationError(row, update);
+  if (configurationError) {
+    return { ok: false, reason: "invalid_configuration", message: configurationError };
+  }
+  if (!(await validateConfigurationUrls(update))) {
+    return {
+      ok: false,
+      reason: "invalid_configuration",
+      message: "Every URL must resolve to a public internet address.",
+    };
+  }
+
+  const configuration = mergeSourceConfiguration(row, update);
+  const nextRow: SourceRow = {
+    ...row,
+    discovery_config: configuration as Json,
+    max_requests_per_run: configuration.maxItems ?? row.max_requests_per_run,
+  };
+  if (row.enabled) {
+    const requirement = sourceSetupRequirement(nextRow);
+    if (requirement) {
+      return { ok: false, reason: "setup_required", requirement };
+    }
+  }
+
+  const updated = await client
+    .from("sources")
+    .update({
+      discovery_config: configuration as Json,
+      max_requests_per_run: nextRow.max_requests_per_run,
+    })
+    .eq("workspace_id", workspaceId(workspace))
+    .eq("id", sourceId)
+    .select("*")
+    .maybeSingle();
+  fail(updated.error);
+  if (!updated.data) return { ok: false, reason: "not_found" };
+  return { ok: true, source: mapSource(updated.data as SourceRow) };
 }
 
 export async function updateSourceEnabled(
@@ -729,16 +1373,29 @@ export async function updateSourceCursor(id: string | number, workspace: string 
 }
 
 export async function upsertCandidate(input: UpsertCandidateInput) {
-  const now = input.lastSeenAt ?? new Date().toISOString();
+  const client = db();
+  const wid = workspaceId(input.workspaceId);
+  const existing = await client
+    .from("candidates")
+    .select("first_seen_at,last_seen_at")
+    .eq("workspace_id", wid)
+    .eq("slug", input.slug)
+    .maybeSingle();
+  fail(existing.error);
+  const window = observationWindow(
+    input.lastSeenAt,
+    existing.data?.first_seen_at,
+    existing.data?.last_seen_at,
+  );
   const payload = {
-    workspace_id: workspaceId(input.workspaceId), slug: input.slug, canonical_name: input.name,
+    workspace_id: wid, slug: input.slug, canonical_name: input.name,
     sort_name: input.sortName ?? input.name, headline: input.headline, location: input.location, stage: input.stage,
     school: input.school, avatar_url: input.avatarUrl, domains: input.domains, status: input.status,
     score: input.score, momentum: input.momentum, confidence: input.confidence, summary_md: input.summaryMarkdown,
     why_now_md: input.whyNowMarkdown, earlyness_md: input.earlynessMarkdown, attributes: input.attributes,
-    search_text: input.searchText, last_seen_at: now,
+    search_text: input.searchText, first_seen_at: window.firstSeenAt, last_seen_at: window.lastSeenAt,
   };
-  const { data, error } = await db().from("candidates").upsert(payload, { onConflict: "workspace_id,slug" }).select("id").single();
+  const { data, error } = await client.from("candidates").upsert(payload, { onConflict: "workspace_id,slug" }).select("id").single();
   fail(error);
   return String((data as Record<string, unknown>).id);
 }
@@ -769,7 +1426,7 @@ export async function mergeCandidateObservation(
   const [candidateResult, identitiesResult] = await Promise.all([
     client
       .from("candidates")
-      .select("id,canonical_name,sort_name,headline,location,avatar_url,attributes,last_seen_at")
+      .select("id,canonical_name,sort_name,headline,location,stage,avatar_url,attributes,last_seen_at")
       .eq("workspace_id", wid)
       .eq("id", candidateId)
       .maybeSingle(),
@@ -838,7 +1495,7 @@ export async function mergeCandidateObservation(
   if (websiteUrl) {
     let websiteIdentityResult = await client
       .from("identities")
-      .select("id,candidate_id,display_name,normalized_name,evidence,distinguishing_facts,match_confidence")
+      .select("id,candidate_id,display_name,normalized_name,evidence,distinguishing_facts,match_confidence,first_seen_at,last_seen_at")
       .eq("workspace_id", wid)
       .eq("provider", "website")
       .eq("provider_subject_id", websiteUrl)
@@ -847,7 +1504,7 @@ export async function mergeCandidateObservation(
     if (!websiteIdentityResult.data) {
       websiteIdentityResult = await client
         .from("identities")
-        .select("id,candidate_id,display_name,normalized_name,evidence,distinguishing_facts,match_confidence")
+        .select("id,candidate_id,display_name,normalized_name,evidence,distinguishing_facts,match_confidence,first_seen_at,last_seen_at")
         .eq("workspace_id", wid)
         .eq("provider", "website")
         .eq("profile_url", websiteUrl)
@@ -895,6 +1552,11 @@ export async function mergeCandidateObservation(
       const websiteNormalizedName =
         sanitizePlainText(existingWebsiteIdentity?.normalized_name, 200) ||
         normalizedName(websiteDisplayName);
+      const websiteWindow = observationWindow(
+        observedAt,
+        existingWebsiteIdentity?.first_seen_at,
+        existingWebsiteIdentity?.last_seen_at,
+      );
       const websiteIdentityPayload = {
         workspace_id: wid,
         candidate_id: candidateId,
@@ -911,7 +1573,8 @@ export async function mergeCandidateObservation(
         match_method: `verified-${provider}-profile-website`,
         distinguishing_facts: distinguishingFacts,
         evidence,
-        last_seen_at: observedAt,
+        first_seen_at: websiteWindow.firstSeenAt,
+        last_seen_at: websiteWindow.lastSeenAt,
       };
       const websiteWrite = existingWebsiteIdentity?.id
         ? await client
@@ -928,6 +1591,40 @@ export async function mergeCandidateObservation(
   const nextAttributes: Record<string, unknown> = { ...attributes };
   const affiliations = mergeUniqueText(attributes.affiliations, input.affiliations);
   if (affiliations.length) nextAttributes.affiliations = affiliations;
+  const alternateNames = mergeObservedNames(
+    attributes.alternateNames,
+    input.alternateNames,
+    nameUpdated ? proposedName : currentName,
+  );
+  if (alternateNames.length) nextAttributes.alternateNames = alternateNames;
+  const verifiedWebsiteOrigins = new Set(
+    identities
+      .filter(
+        (identity) =>
+          String(identity.provider) === "website" &&
+          String(identity.resolution_status) === "resolved",
+      )
+      .flatMap((identity) => {
+        const url = safeStoredHttpUrl(identity.profile_url);
+        return url ? [new URL(url).origin] : [];
+      }),
+  );
+  if (websiteUrl) verifiedWebsiteOrigins.add(new URL(websiteUrl).origin);
+  const observedContactRoutes = normalizeContactRoutes(
+    input.contactRoutes ?? [],
+    String(row.stage ?? ""),
+  ).filter((route) => {
+    if (route.audience !== "direct" && route.kind !== "institutional") return true;
+    return verifiedWebsiteOrigins.has(new URL(route.provenanceUrl).origin);
+  });
+  const contactRoutes = normalizeContactRoutes(
+    [
+      ...contactRoutesFromJson(attributes.publicContactRoutes),
+      ...observedContactRoutes,
+    ],
+    String(row.stage ?? ""),
+  );
+  if (contactRoutes.length) nextAttributes.publicContactRoutes = contactRoutes;
   const biography = redactContactText(input.biography, 2_000);
   if (biography && !sanitizePlainText(attributes.biography, 2_000)) {
     nextAttributes.biography = biography;
@@ -1026,26 +1723,69 @@ export async function mergeCandidateObservation(
 export async function upsertIdentityObservation(input: IdentityObservationInput): Promise<IdentityResolutionResult> {
   const client = db();
   const wid = workspaceId(input.workspaceId);
-  let lookup = client.from("identities").select("*").eq("workspace_id", wid).eq("provider", input.provider);
-  lookup = input.providerSubjectId ? lookup.eq("provider_subject_id", input.providerSubjectId) : lookup.eq("profile_url", input.profileUrl ?? "");
-  const existing = await lookup.maybeSingle(); fail(existing.error);
+  const baseLookup = () => client.from("identities").select("*").eq("workspace_id", wid).eq("provider", input.provider);
+  let existing = input.providerSubjectId
+    ? await baseLookup().eq("provider_subject_id", input.providerSubjectId).maybeSingle()
+    : await baseLookup().eq("profile_url", input.profileUrl ?? "").maybeSingle();
+  fail(existing.error);
+  if (!existing.data && input.profileUrl) {
+    existing = await baseLookup().eq("profile_url", input.profileUrl).maybeSingle();
+    fail(existing.error);
+  }
   const sameName = await client.from("identities").select("candidate_id,match_confidence").eq("workspace_id", wid)
     .eq("normalized_name", input.normalizedName).not("candidate_id", "is", null).limit(10); fail(sameName.error);
-  const candidateIds = [...new Set((sameName.data ?? []).map((row) => String((row as Record<string, unknown>).candidate_id)))];
-  if (existing.data && (existing.data as Record<string, unknown>).candidate_id) candidateIds.unshift(String((existing.data as Record<string, unknown>).candidate_id));
+  const existingRow = existing.data as Record<string, unknown> | null;
+  const existingCandidateId = existingRow?.candidate_id
+    ? String(existingRow.candidate_id)
+    : null;
+  const candidateIds = [...new Set([
+    ...(existingCandidateId ? [existingCandidateId] : []),
+    ...(sameName.data ?? []).map((row) => String((row as Record<string, unknown>).candidate_id)),
+  ])];
   const candidateRows = candidateIds.length ? await client.from("candidates").select("id,canonical_name,slug").in("id", candidateIds.map(Number)) : { data: [], error: null };
   fail(candidateRows.error);
   const matches: IdentityCandidateMatch[] = ((candidateRows.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     candidateId: String(row.id), name: String(row.canonical_name), slug: String(row.slug),
-    score: existing.data && String((existing.data as Record<string, unknown>).candidate_id) === String(row.id) ? 1 : 0.58,
-    signals: {}, exactProviderMatch: Boolean(existing.data && String((existing.data as Record<string, unknown>).candidate_id) === String(row.id)),
+    score: existingCandidateId === String(row.id) ? 1 : 0.58,
+    signals: {}, exactProviderMatch: existingCandidateId === String(row.id),
   }));
+  // A durable provider identity is immutable across candidates. Cross-source
+  // observations may propose a hypothesis, but they never rewrite an existing
+  // binding or replace its provider-authored display fields.
+  if (existingRow && existingCandidateId) {
+    return {
+      identityId: String(existingRow.id),
+      status: String(existingRow.resolution_status) as IdentityResolutionResult["status"],
+      candidateId: existingCandidateId,
+      matches,
+    };
+  }
+  const storedProviderSubjectId = existingRow?.provider_subject_id
+    ? String(existingRow.provider_subject_id)
+    : null;
+  if (
+    storedProviderSubjectId &&
+    input.providerSubjectId &&
+    storedProviderSubjectId !== input.providerSubjectId
+  ) {
+    return {
+      identityId: String(existingRow?.id),
+      status: "ambiguous",
+      candidateId: null,
+      matches,
+    };
+  }
   const status = input.candidateId ? "resolved" : matches.length ? "ambiguous" : "unresolved";
+  const window = observationWindow(
+    input.seenAt,
+    existingRow?.first_seen_at,
+    existingRow?.last_seen_at,
+  );
   const payload = { workspace_id: wid, candidate_id: input.candidateId ? Number(input.candidateId) : existing.data && (existing.data as Record<string, unknown>).candidate_id ? Number((existing.data as Record<string, unknown>).candidate_id) : null,
-    provider: input.provider, provider_subject_id: input.providerSubjectId, handle: input.handle, profile_url: input.profileUrl,
+    provider: input.provider, provider_subject_id: storedProviderSubjectId ?? input.providerSubjectId, handle: input.handle, profile_url: input.profileUrl,
     display_name: input.displayName, normalized_name: input.normalizedName, resolution_status: input.candidateId ? "resolved" : status,
     ambiguity_key: input.ambiguityKey, match_confidence: input.confidence ?? 0.5, match_method: input.matchMethod,
-    distinguishing_facts: input.distinguishingFacts ?? {}, evidence: input.evidence ?? [], last_seen_at: input.seenAt ?? new Date().toISOString() };
+    distinguishing_facts: input.distinguishingFacts ?? {}, evidence: input.evidence ?? [], first_seen_at: window.firstSeenAt, last_seen_at: window.lastSeenAt };
   const result = existing.data
     ? await client.from("identities").update(payload).eq("id", Number((existing.data as Record<string, unknown>).id)).select("id,candidate_id,resolution_status").single()
     : await client.from("identities").insert(payload).select("id,candidate_id,resolution_status").single();
@@ -1072,7 +1812,21 @@ export async function reviewIdentityCandidate(input: ReviewIdentityCandidateInpu
 export async function insertCandidateEvent(input: InsertCandidateEventInput) {
   const client = db(); const wid = workspaceId(input.workspaceId);
   const existing = await client.from("events").select("id").eq("workspace_id", wid).eq("content_hash", input.contentHash).maybeSingle(); fail(existing.error);
-  if (existing.data) return String((existing.data as Record<string, unknown>).id);
+  if (existing.data) {
+    const eventId = String((existing.data as Record<string, unknown>).id);
+    const result = await client.from("events").update({
+      title: input.title,
+      occurred_at: input.occurredAt,
+      source_url: input.sourceUrl,
+      source_label: input.sourceLabel,
+      external_id: input.externalId,
+      evidence_excerpt: input.evidenceExcerpt,
+      confidence: input.confidence,
+      raw_payload: input.rawPayload ?? {},
+    } as never).eq("workspace_id", wid).eq("id", Number(eventId));
+    fail(result.error);
+    return { eventId, inserted: false };
+  }
   const { data, error } = await client.from("events").insert({ workspace_id: wid, candidate_id: Number(input.candidateId), source_id: input.sourceId ? Number(input.sourceId) : null,
     run_id: input.runId ? Number(input.runId) : null, event_type: input.eventType, title: input.title, summary_md: input.summaryMarkdown ?? "",
     why_it_matters_md: input.whyItMattersMarkdown ?? "", occurred_at: input.occurredAt, discovered_at: input.discoveredAt,
@@ -1083,29 +1837,40 @@ export async function insertCandidateEvent(input: InsertCandidateEventInput) {
   const eventId = String((data as Record<string, unknown>).id);
   if (input.evidenceLinks?.length) { const result = await client.from("event_evidence").upsert(input.evidenceLinks.map((link) => ({ workspace_id: wid, event_id: Number(eventId),
     url: link.url, label: link.label, excerpt: link.excerpt, evidence_kind: link.kind })), { onConflict: "workspace_id,event_id,url" }); fail(result.error); }
-  return eventId;
+  return { eventId, inserted: true };
 }
 
 export async function upsertGraphNode(input: UpsertGraphNodeInput) {
   const client = db(); const wid = workspaceId(input.workspaceId);
-  const existing = await client.from("graph_nodes").select("id").eq("workspace_id", wid).eq("provider", input.provider).eq("external_key", input.externalKey).maybeSingle(); fail(existing.error);
-  const payload = { workspace_id: wid, candidate_id: input.candidateId ? Number(input.candidateId) : null, identity_id: input.identityId ? Number(input.identityId) : null,
+  const existing = await client.from("graph_nodes").select("id,candidate_id,identity_id,first_seen_at,last_seen_at").eq("workspace_id", wid).eq("provider", input.provider).eq("external_key", input.externalKey).maybeSingle(); fail(existing.error);
+  const window = observationWindow(
+    input.seenAt,
+    existing.data?.first_seen_at,
+    existing.data?.last_seen_at,
+  );
+  const payload = { workspace_id: wid, candidate_id: input.candidateId ? Number(input.candidateId) : input.identityId ? null : existing.data?.candidate_id ?? null, identity_id: input.identityId ? Number(input.identityId) : input.candidateId ? null : existing.data?.identity_id ?? null,
     node_type: input.nodeType, provider: input.provider, external_key: input.externalKey, label: input.label, url: input.url,
-    properties: input.properties ?? {}, last_seen_at: input.seenAt ?? new Date().toISOString() };
+    properties: input.properties ?? {}, first_seen_at: window.firstSeenAt, last_seen_at: window.lastSeenAt };
   const result = existing.data ? await client.from("graph_nodes").update(payload).eq("id", Number((existing.data as Record<string, unknown>).id)).select("id").single()
     : await client.from("graph_nodes").insert(payload).select("id").single(); fail(result.error); return String((result.data as Record<string, unknown>).id);
 }
 
 export async function upsertGraphEdge(input: UpsertGraphEdgeInput) {
   const client = db(); const wid = workspaceId(input.workspaceId); const sourceId = input.sourceId ? Number(input.sourceId) : null;
-  let lookup = client.from("graph_edges").select("id,evidence_count").eq("workspace_id", wid).eq("from_node_id", Number(input.fromNodeId))
+  let lookup = client.from("graph_edges").select("id,evidence_count,first_observed_at,last_observed_at").eq("workspace_id", wid).eq("from_node_id", Number(input.fromNodeId))
     .eq("to_node_id", Number(input.toNodeId)).eq("relationship_type", input.relationshipType);
   lookup = sourceId ? lookup.eq("source_id", sourceId) : lookup.is("source_id", null);
   const existing = await lookup.maybeSingle(); fail(existing.error);
+  const observedAt = input.observedAt ?? new Date().toISOString();
+  const window = observationWindow(
+    observedAt,
+    existing.data?.first_observed_at,
+    existing.data?.last_observed_at,
+  );
   const payload = { workspace_id: wid, from_node_id: Number(input.fromNodeId), to_node_id: Number(input.toNodeId), source_id: sourceId,
     relationship_type: input.relationshipType, directed: input.directed ?? true, strength: input.strength ?? 0.5,
     evidence_count: existing.data ? Number((existing.data as Record<string, unknown>).evidence_count ?? 0) + (input.evidenceCount ?? 1) : input.evidenceCount ?? 1,
-    last_observed_at: input.observedAt ?? new Date().toISOString(), metadata: input.metadata ?? {} };
+    first_observed_at: window.firstSeenAt, last_observed_at: window.lastSeenAt, metadata: input.metadata ?? {} };
   const result = existing.data ? await client.from("graph_edges").update(payload).eq("id", Number((existing.data as Record<string, unknown>).id)).select("id").single()
     : await client.from("graph_edges").insert(payload).select("id").single(); fail(result.error); return String((result.data as Record<string, unknown>).id);
 }
@@ -1113,21 +1878,210 @@ export async function upsertGraphEdge(input: UpsertGraphEdgeInput) {
 export async function updateCandidateIntelligence(input: UpdateCandidateIntelligenceInput) {
   const payload: Record<string, unknown> = {}; const map: Record<string,string> = { score:"score", momentum:"momentum", confidence:"confidence", status:"status",
     summaryMarkdown:"summary_md", whyNowMarkdown:"why_now_md", earlynessMarkdown:"earlyness_md", scoreComponents:"score_components", searchText:"search_text",
-    embedding:"embedding", embeddingModel:"embedding_model", sourceCount:"source_count", lastSeenAt:"last_seen_at" };
+    embedding:"embedding", embeddingModel:"embedding_model", sourceCount:"source_count", lastSeenAt:"last_seen_at",
+    briefEvidenceFingerprint:"brief_evidence_fingerprint", briefGeneratedAt:"brief_generated_at", briefModel:"brief_model", briefPromptVersion:"brief_prompt_version", briefClaimedUntil:"brief_claimed_until" };
   for (const [key,column] of Object.entries(map)) if (key in input) payload[column] = input[key as keyof UpdateCandidateIntelligenceInput];
   if (input.embedding) payload.embedding_updated_at = new Date().toISOString();
-  const { error } = await db().from("candidates").update(payload).eq("workspace_id", workspaceId(input.workspaceId)).eq("id", Number(input.candidateId)); fail(error);
+  let lastError: { message: string; code?: string } | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { error } = await db()
+      .from("candidates")
+      .update(payload)
+      .eq("workspace_id", workspaceId(input.workspaceId))
+      .eq("id", Number(input.candidateId));
+    if (!error) return;
+    lastError = error;
+    const transient = /fetch failed|timeout|connection|502|503|504/i.test(error.message);
+    if (!transient || attempt === 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+  }
+  fail(lastError);
 }
 
-export async function listEnrichmentShortlist(workspace: string | number, limit = 20) { return listCandidates({ limit }, workspace); }
+export async function listAutomaticReviewShortlist(workspace: string | number, limit = 20) {
+  if (!hasSupabaseAdminEnv()) return [];
+  const boundedLimit = Math.min(100, Math.max(0, Math.floor(limit)));
+  if (!boundedLimit) return [];
+  const wid = workspaceId(workspace);
+  const backlog = await db()
+    .from("candidates")
+    .select("*")
+    .eq("workspace_id", wid)
+    .neq("status", "archived")
+    .filter("score_components", "eq", "{}")
+    .order("first_seen_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(boundedLimit);
+  fail(backlog.error);
+  const pending = await hydrate((backlog.data ?? []) as CandidateRow[]);
+  if (pending.length >= boundedLimit) return pending;
+
+  const existing = new Set(pending.map((candidate) => candidate.id));
+  const ranked = await listCandidates({ limit: boundedLimit }, workspace);
+  return [
+    ...pending,
+    ...ranked.filter((candidate) => !existing.has(candidate.id)),
+  ].slice(0, boundedLimit);
+}
+
+export async function listEnrichmentShortlist(workspace: string | number, limit = 20) {
+  if (!hasSupabaseAdminEnv()) return [];
+  const boundedLimit = Math.min(100, Math.max(0, Math.floor(limit)));
+  if (!boundedLimit) return [];
+  const wid = workspaceId(workspace);
+  const claim = await db().rpc("claim_candidate_enrichment_batch", {
+    p_workspace_id: wid,
+    p_match_count: boundedLimit,
+    p_claim_seconds: 360,
+  });
+  fail(claim.error);
+  const rows = claim.data ?? [];
+  const ids = rows.map((row) => Number(row.candidate_id)).filter(Number.isFinite);
+  if (!ids.length) return [];
+  const result = await db().from("candidates").select("*").in("id", ids);
+  fail(result.error);
+  const candidates = await hydrate((result.data ?? []) as CandidateRow[]);
+  const hypothesesResult = await db()
+    .from("identity_candidates")
+    .select("candidate_id,identity_id,match_score")
+    .eq("workspace_id", wid)
+    .eq("decision", "proposed")
+    .in("candidate_id", ids)
+    .gte("match_score", 0.58);
+  fail(hypothesesResult.error);
+  const hypothesisRows = (hypothesesResult.data ?? []) as Array<Record<string, unknown>>;
+  const hypothesisIdentityIds = [
+    ...new Set(hypothesisRows.map((row) => Number(row.identity_id)).filter(Number.isFinite)),
+  ];
+  const hypothesisIdentitiesResult = hypothesisIdentityIds.length
+    ? await db().from("identities").select("*").in("id", hypothesisIdentityIds)
+    : { data: [], error: null };
+  fail(hypothesisIdentitiesResult.error);
+  const hypothesisIdentityById = new Map(
+    ((hypothesisIdentitiesResult.data ?? []) as Array<Record<string, unknown>>)
+      .map((identity) => [String(identity.id), identity]),
+  );
+  const candidatesWithResearchHypotheses = candidates.map((candidate) => {
+    const existing = new Set(
+      candidate.identities.map((identity) =>
+        `${identity.provider}:${identity.handle || identity.profileUrl || identity.id}`.toLowerCase(),
+      ),
+    );
+    const researchIdentities = hypothesisRows.flatMap((hypothesis) => {
+      if (String(hypothesis.candidate_id) !== candidate.id) return [];
+      const identity = hypothesisIdentityById.get(String(hypothesis.identity_id));
+      if (!identity) return [];
+      const key = `${identity.provider}:${identity.handle || identity.profile_url || identity.id}`.toLowerCase();
+      if (existing.has(key)) return [];
+      existing.add(key);
+      return [{
+        id: String(identity.id),
+        provider: String(identity.provider),
+        providerSubjectId: String(identity.provider_subject_id ?? identity.id),
+        handle: identity.handle ? String(identity.handle) : undefined,
+        profileUrl: identity.profile_url ? String(identity.profile_url) : undefined,
+        displayName: String(identity.display_name ?? candidate.name),
+        resolutionStatus: "unresolved" as const,
+        confidence: Math.min(
+          Number(hypothesis.match_score ?? 0.58),
+          Number(identity.match_confidence ?? 0.58),
+        ),
+        distinguishingFacts: Object.keys(record(identity.distinguishing_facts)),
+      }];
+    });
+    return researchIdentities.length
+      ? { ...candidate, identities: [...candidate.identities, ...researchIdentities].slice(0, 16) }
+      : candidate;
+  });
+  const byId = new Map(candidatesWithResearchHypotheses.map((candidate) => [candidate.id, candidate]));
+  return rows.flatMap((row) => {
+    const candidate = byId.get(String(row.candidate_id));
+    return candidate ? [{
+      candidate,
+      researchPass: Number(row.research_pass ?? 0),
+      researchRevision: Number(row.research_revision ?? 0),
+    }] : [];
+  });
+}
+
+export async function recordCandidateEnrichmentAttempt(input: {
+  workspaceId: string | number;
+  candidateId: string | number;
+  attemptedAt: string;
+  eventCount: number;
+  researchPass?: number;
+  researchRevision?: number;
+}) {
+  const eventCount = Math.max(0, Math.floor(input.eventCount));
+  const attemptedAt = new Date(input.attemptedAt);
+  if (!Number.isFinite(attemptedAt.getTime())) {
+    throw new Error("Enrichment attempt time must be a valid timestamp");
+  }
+  const result = await db().rpc("complete_candidate_enrichment_attempt", {
+    p_workspace_id: workspaceId(input.workspaceId),
+    p_candidate_id: Number(input.candidateId),
+    p_event_count: eventCount,
+    p_attempted_at: attemptedAt.toISOString(),
+    p_research_revision: Math.max(0, Math.floor(input.researchRevision ?? 0)),
+  });
+  fail(result.error);
+}
+
+export async function claimCandidateBriefingBacklog(
+  workspace: string | number,
+  limit = 12,
+) {
+  if (!hasSupabaseAdminEnv()) return [];
+  const wid = workspaceId(workspace);
+  const boundedLimit = Math.min(50, Math.max(0, Math.floor(limit)));
+  if (!boundedLimit) return [];
+  const claim = await db().rpc("claim_candidate_brief_batch", {
+    p_workspace_id: wid,
+    p_match_count: boundedLimit,
+    p_claim_seconds: 300,
+  });
+  fail(claim.error);
+  const rows = claim.data ?? [];
+  const ids = rows.map((row) => Number(row.candidate_id)).filter(Number.isFinite);
+  if (!ids.length) return [];
+  const candidatesResult = await db().from("candidates").select("*").in("id", ids);
+  fail(candidatesResult.error);
+  const candidates = await hydrate((candidatesResult.data ?? []) as CandidateRow[]);
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  return rows.flatMap((row) => {
+    const candidate = byId.get(String(row.candidate_id));
+    return candidate
+      ? [{ candidate, evidenceFingerprint: row.evidence_fingerprint }]
+      : [];
+  });
+}
+
+export async function releaseCandidateBriefClaim(
+  workspace: string | number,
+  candidateId: string | number,
+) {
+  if (!hasSupabaseAdminEnv()) return;
+  // Generation and evidence-contract failures must not be reclaimed by every
+  // half-hour worker. The claim column also acts as a durable retry-after time.
+  const retryAt = new Date(Date.now() + 6 * 60 * 60 * 1_000).toISOString();
+  const { error } = await db()
+    .from("candidates")
+    .update({ brief_claimed_until: retryAt })
+    .eq("workspace_id", workspaceId(workspace))
+    .eq("id", Number(candidateId));
+  fail(error);
+}
 
 function mapCriterion(row: CriterionProfileRow): CriterionProfile {
   const thresholds = record(row.thresholds); const digest = record(row.digest_config); const weights = record(row.signal_weights);
+  const configuredDays = Array.isArray(digest.digestDaysOfWeek)
+    ? digest.digestDaysOfWeek.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    : [];
   const signals: CriterionSignal[] = Array.isArray(weights.signals) ? (weights.signals as CriterionSignal[]) : Object.entries(weights).filter(([,v]) => typeof v === "number")
     .map(([key,value]) => ({ key, label: key.replace(/([A-Z])/g," $1"), description:"", weight:Number(value), enabled:true }));
   return { id:String(row.id), name:row.name, version:row.version, status:row.status as CriterionProfile["status"], lookForMarkdown:row.look_for_md,
-    avoidMarkdown:row.avoid_md, signals, minimumScore:Number(thresholds.minimumScore ?? 55), minimumConfidence:Number(thresholds.minimumConfidence ?? .6),
-    weeklyCandidateCount:Number(digest.weeklyCandidateCount ?? 12), explorationRate:Number(row.exploration_rate), learningRate:Number(row.learning_rate),
+    avoidMarkdown:row.avoid_md, signals, minimumScore:parseMinimumScore(thresholds.minimumScore), minimumConfidence:Number(thresholds.minimumConfidence ?? .6),
+    weeklyCandidateCount:Number(digest.weeklyCandidateCount ?? 12), digestCadence:parseDigestCadence(digest.digestCadence), digestDaysOfWeek:configuredDays.length ? [...new Set(configuredDays)].sort((a,b)=>a-b) : [1], digestDeliveryHourUtc:Math.min(23, Math.max(0, Math.trunc(Number(digest.digestDeliveryHourUtc ?? 15)))), digestDeliveryMinuteUtc:[0,15,30,45].includes(Number(digest.digestDeliveryMinuteUtc)) ? Number(digest.digestDeliveryMinuteUtc) : 0, digestPreparationLeadHours:Math.min(12, Math.max(1, Math.trunc(Number(digest.digestPreparationLeadHours ?? 3)))), explorationRate:Number(row.exploration_rate), learningRate:Number(row.learning_rate),
     lastLearnedAt:row.update_origin === "learned" ? row.updated_at : null, trainingSampleCount:row.training_sample_count };
 }
 
@@ -1143,8 +2097,8 @@ export async function createCriterionProfileVersion(workspace: string | number, 
   const version=Number((latest.data?.[0] as Record<string,unknown>|undefined)?.version ?? 0)+1;
   const {data,error}=await client.from("criterion_profiles").insert({ workspace_id:wid,parent_id:current?.id ? Number(current.id):null,name:input.name ?? current?.name ?? "Unfound criterion",
     version,status:"draft",update_origin:input.origin ?? "human",look_for_md:input.lookForMarkdown ?? current?.lookForMarkdown ?? "",avoid_md:input.avoidMarkdown ?? current?.avoidMarkdown ?? "",
-    signal_weights:JSON.parse(JSON.stringify({signals:input.signals ?? current?.signals ?? []})) as Json,thresholds:{minimumScore:input.minimumScore ?? current?.minimumScore ?? 55,minimumConfidence:input.minimumConfidence ?? current?.minimumConfidence ?? .6},
-    digest_config:{weeklyCandidateCount:input.weeklyCandidateCount ?? current?.weeklyCandidateCount ?? 12},learning_rate:input.learningRate ?? current?.learningRate ?? .01,
+    signal_weights:JSON.parse(JSON.stringify({signals:input.signals ?? current?.signals ?? []})) as Json,thresholds:{minimumScore:input.minimumScore ?? current?.minimumScore ?? 25,minimumConfidence:input.minimumConfidence ?? current?.minimumConfidence ?? .6},
+    digest_config:{weeklyCandidateCount:input.weeklyCandidateCount ?? current?.weeklyCandidateCount ?? 12,digestCadence:input.digestCadence ?? current?.digestCadence ?? "weekly",digestDaysOfWeek:input.digestDaysOfWeek ?? current?.digestDaysOfWeek ?? [1],digestDeliveryHourUtc:input.digestDeliveryHourUtc ?? current?.digestDeliveryHourUtc ?? 15,digestDeliveryMinuteUtc:input.digestDeliveryMinuteUtc ?? current?.digestDeliveryMinuteUtc ?? 0,digestPreparationLeadHours:input.digestPreparationLeadHours ?? current?.digestPreparationLeadHours ?? 3},learning_rate:input.learningRate ?? current?.learningRate ?? .01,
     exploration_rate:input.explorationRate ?? current?.explorationRate ?? .1,training_sample_count:input.trainingSampleCount ?? current?.trainingSampleCount ?? 0,
     change_summary:input.changeSummary,change_set:input.changeSet ?? {} }).select("*").single(); fail(error);
   if(input.activate !== false){ const retired=await client.from("criterion_profiles").update({status:"retired"}).eq("workspace_id",wid).eq("status","active"); fail(retired.error);
@@ -1167,7 +2121,7 @@ export async function listTasteFeedback(workspace: string|number, limit=500): Pr
 }
 
 export async function rankCandidatesForDigest(workspace: string|number, options:{minimumScore?:number;limit?:number;excludeDays?:number}={}):Promise<RankedCandidate[]> {
-  if(!hasSupabaseAdminEnv()) return []; const {data,error}=await db().rpc("rank_candidates_for_digest",{p_workspace_id:workspaceId(workspace),p_min_score:options.minimumScore ?? 55,
+  if(!hasSupabaseAdminEnv()) return []; const {data,error}=await db().rpc("rank_candidates_for_digest",{p_workspace_id:workspaceId(workspace),p_min_score:options.minimumScore ?? 25,
     p_match_count:Math.min(100,options.limit ?? 12),p_exclude_days:options.excludeDays ?? 30}); fail(error);
   return ((data ?? []) as Array<Record<string,unknown>>).map(row=>({candidateId:String(row.candidate_id ?? row.id),slug:String(row.slug),name:String(row.canonical_name ?? row.name),headline:String(row.headline ?? ""),
     score:Number(row.score),momentum:Number(row.momentum),confidence:Number(row.confidence),latestEventAt:row.latest_event_at?String(row.latest_event_at):null,rankScore:Number(row.rank_score ?? row.score)}));
@@ -1395,8 +2349,65 @@ export async function updateDigestSubscriber(
 export async function removeDigestSubscriber(workspace:string|number,id:string|number){const{error}=await db().from("digest_subscribers").delete().eq("workspace_id",workspaceId(workspace)).eq("id",Number(id));fail(error);}
 export async function updateSubscriberDeliveries(workspace:string|number,updates:SubscriberDeliveryUpdate[]){for(const update of updates)await updateDigestSubscriber(workspace,update.subscriberId,{deliveryStatus:update.deliveryStatus,lastSentAt:update.lastSentAt});}
 
-export async function getDashboardData(workspace?:string|number):Promise<DashboardData & DataReadiness>{const ready=getDataReadiness(workspace);if(!hasSupabaseAdminEnv())return{candidates:[],recentEvents:[],graph:{nodes:[],edges:[]},sources:[],criterion:emptyCriterion,subscribers:[],metrics:[],pipelineActivity:[],weeklyTrend:[],generatedAt:new Date().toISOString(),...ready};
-  const [candidates,sources,criterion,subscribers]=await Promise.all([listCandidates({limit:100},workspace),listSources(workspace),getActiveCriterionProfile(workspace),listDigestSubscribers(String(workspaceId(workspace)))]);
-  return{candidates,recentEvents:candidates.flatMap(candidate=>candidate.events).sort((a,b)=>b.discoveredAt.localeCompare(a.discoveredAt)).slice(0,20),graph:{nodes:[],edges:[]},sources,criterion:criterion ?? emptyCriterion,subscribers,
-    metrics:[{label:"Candidates",value:candidates.length,change:0},{label:"New signals",value:candidates.reduce((sum,c)=>sum+c.events.length,0),change:0}],pipelineActivity:[],weeklyTrend:[],generatedAt:new Date().toISOString(),
-    ...ready,dataMode:candidates.length||sources.length?"live":"empty"};}
+function emptyDashboardData(readiness: DataReadiness): DashboardData & DataReadiness {
+  return {
+    candidates: [],
+    recentEvents: [],
+    graph: { nodes: [], edges: [] },
+    sources: [],
+    criterion: emptyCriterion,
+    subscribers: [],
+    metrics: [],
+    pipelineActivity: [],
+    weeklyTrend: [],
+    generatedAt: new Date().toISOString(),
+    ...readiness,
+  };
+}
+
+export async function getDashboardData(
+  workspace?: string | number,
+): Promise<DashboardData & DataReadiness> {
+  const ready = getDataReadiness(workspace);
+  if (!hasSupabaseAdminEnv()) return emptyDashboardData(ready);
+
+  try {
+    const [candidates, sources, criterion, subscribers] = await Promise.all([
+      listCandidates({ limit: 100 }, workspace),
+      listSources(workspace),
+      getActiveCriterionProfile(workspace),
+      listDigestSubscribers(String(workspaceId(workspace))),
+    ]);
+    return {
+      candidates,
+      recentEvents: candidates
+        .flatMap((candidate) => candidate.events)
+        .sort((a, b) => b.discoveredAt.localeCompare(a.discoveredAt))
+        .slice(0, 20),
+      graph: { nodes: [], edges: [] },
+      sources,
+      criterion: criterion ?? emptyCriterion,
+      subscribers,
+      metrics: [
+        { label: "Candidates", value: candidates.length, change: 0 },
+        {
+          label: "New signals",
+          value: candidates.reduce((sum, candidate) => sum + candidate.events.length, 0),
+          change: 0,
+        },
+      ],
+      pipelineActivity: [],
+      weeklyTrend: [],
+      generatedAt: new Date().toISOString(),
+      ...ready,
+      dataMode: candidates.length || sources.length ? "live" : "empty",
+    };
+  } catch (error) {
+    if (!(error instanceof DataNotConfiguredError)) throw error;
+    return emptyDashboardData({
+      ...ready,
+      dataMode: "unconfigured",
+      missingCapabilities: [...new Set([...ready.missingCapabilities, "supabase-schema"])],
+    });
+  }
+}

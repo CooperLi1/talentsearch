@@ -8,9 +8,77 @@ import type {
   SourceKind,
 } from "./types";
 import { mapLimit } from "./connectors/shared";
+import { isLinkedInDirectAccessApproved } from "./linkedin-policy";
+
+const MAX_CONNECTORS_PER_PERSON = 12;
+
+function identityKey(identity: PersonObservation["identities"][number]) {
+  return `${identity.provider}:${identity.externalId || identity.profileUrl || identity.username || ""}`.toLowerCase();
+}
+
+function normalizedIdentityValue(value: string) {
+  return value.toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "");
+}
+
+function looksLikeHumanName(value: string) {
+  const parts = value.trim().split(/\s+/);
+  return parts.length >= 2 && parts.length <= 5 && parts.every((part) => /[a-z]{2}/i.test(part));
+}
+
+export function mergePersonObservation(current: PersonObservation, observed: PersonObservation) {
+  const identities = new Map(current.identities.map((identity) => [identityKey(identity), identity]));
+  for (const identity of observed.identities) {
+    const key = identityKey(identity);
+    const existing = identities.get(key);
+    if (!existing || (!existing.verified && identity.verified)) identities.set(key, identity);
+  }
+  const contactRoutes = new Map(
+    (current.contactRoutes ?? []).map((route) => [route.url.toLowerCase(), route]),
+  );
+  for (const route of observed.contactRoutes ?? []) {
+    const existing = contactRoutes.get(route.url.toLowerCase());
+    if (!existing || route.confidence > existing.confidence) contactRoutes.set(route.url.toLowerCase(), route);
+  }
+  const currentNameIsProviderHandle = current.identities.some(
+    (identity) =>
+      identity.username &&
+      normalizedIdentityValue(identity.username) === normalizedIdentityValue(current.displayName),
+  );
+  const alternateNames = new Map(
+    (current.alternateNames ?? []).map((item) => [normalizedIdentityValue(item.name), item]),
+  );
+  for (const item of observed.alternateNames ?? []) {
+    const key = normalizedIdentityValue(item.name);
+    const existing = alternateNames.get(key);
+    if (key && (!existing || item.confidence > existing.confidence)) alternateNames.set(key, item);
+  }
+  return {
+    ...current,
+    displayName:
+      currentNameIsProviderHandle && looksLikeHumanName(observed.displayName)
+        ? observed.displayName
+        : current.displayName,
+    headline: current.headline || observed.headline,
+    biography: current.biography || observed.biography,
+    location: current.location || observed.location,
+    affiliations: [...new Set([...(current.affiliations ?? []), ...(observed.affiliations ?? [])])].slice(0, 12),
+    alternateNames: [...alternateNames.values()].slice(0, 20),
+    avatarUrl: current.avatarUrl || observed.avatarUrl,
+    websiteUrl: current.websiteUrl || observed.websiteUrl,
+    identities: [...identities.values()].slice(0, 16),
+    contactRoutes: [...contactRoutes.values()].slice(0, 12),
+  } satisfies PersonObservation;
+}
+
+function connectorKindForIdentity(provider: string): SourceKind | null {
+  if (provider === "website") return "web-presence";
+  return provider as SourceKind;
+}
 
 export async function enrichPeople(input: {
   people: PersonObservation[];
+  evidenceEvents?: DiscoveryEvent[][];
+  researchPasses?: number[];
   connectors: Map<SourceKind, DiscoveryConnector>;
   settings: Partial<Record<SourceKind, ConnectorSettings>>;
   now?: Date;
@@ -25,40 +93,79 @@ export async function enrichPeople(input: {
   const results = await mapLimit(
     input.people,
     Math.min(8, Math.max(1, input.concurrency ?? 3)),
-    async (person) => {
+    async (person, personIndex) => {
       const events: DiscoveryEvent[] = [];
+      const evidenceEvents = [...(input.evidenceEvents?.[personIndex] ?? [])];
       const edges: GraphEdge[] = [];
-      const providers = new Set(person.identities.map((identity) => identity.provider));
-      if (input.settings["brave-enrichment"]?.enabled) providers.add("brave-enrichment");
-      if (person.websiteUrl && input.settings["web-presence"]?.enabled) {
-        providers.add("web-presence");
-      }
-      for (const provider of providers) {
-        const kind = provider as SourceKind;
+      let enrichedPerson = person;
+      const attempted = new Set<SourceKind>();
+      const queued = new Set<SourceKind>();
+      const queue: SourceKind[] = [];
+      const enqueue = (kind: SourceKind | null) => {
+        if (
+          !kind ||
+          queued.has(kind) ||
+          attempted.has(kind) ||
+          !input.settings[kind]?.enabled ||
+          !input.connectors.get(kind)?.enrich
+        ) return;
+        queued.add(kind);
+        // Public web search benefits from every provider-native observation, so
+        // keep it at the back while newly verified providers run first.
+        if (kind === "brave-enrichment") queue.push(kind);
+        else {
+          const braveIndex = queue.indexOf("brave-enrichment");
+          if (braveIndex === -1) queue.push(kind);
+          else queue.splice(braveIndex, 0, kind);
+        }
+      };
+      const enqueueKnownProviders = () => {
+        for (const identity of enrichedPerson.identities) {
+          if (
+            identity.verified !== true &&
+            !(identity.provider === "linkedin-manual" && isLinkedInDirectAccessApproved())
+          ) continue;
+          enqueue(connectorKindForIdentity(identity.provider));
+        }
+        if (enrichedPerson.websiteUrl) enqueue("web-presence");
+        enqueue("brave-enrichment");
+      };
+      enqueueKnownProviders();
+
+      while (queue.length && attempted.size < MAX_CONNECTORS_PER_PERSON) {
+        const kind = queue.shift()!;
+        queued.delete(kind);
+        if (attempted.has(kind)) continue;
+        attempted.add(kind);
         const connector = input.connectors.get(kind);
         const settings = input.settings[kind];
         if (!connector || !settings?.enabled) continue;
-        if (connector.enrich) {
-          try {
-            const result = await connector.enrich({
-              now,
-              person,
-              settings,
-              signal: input.signal,
-            });
-            if (result) {
-              events.push(...result.events);
-              edges.push(...(result.edges ?? []));
-              warnings.push(...(result.warnings ?? []).map((warning) => `${connector.kind}: ${warning}`));
+        try {
+          const result = await connector.enrich?.({
+            now,
+            person: enrichedPerson,
+            evidenceEvents,
+            settings,
+            researchPass: input.researchPasses?.[personIndex] ?? 0,
+            signal: input.signal,
+          });
+          if (result) {
+            events.push(...result.events);
+            evidenceEvents.push(...result.events);
+            edges.push(...(result.edges ?? []));
+            warnings.push(...(result.warnings ?? []).map((warning) => `${connector.kind}: ${warning}`));
+            for (const event of result.events) {
+              enrichedPerson = mergePersonObservation(enrichedPerson, event.person);
             }
-          } catch (error) {
-            warnings.push(
-              `${connector.displayName} enrichment failed for ${person.displayName}: ${error instanceof Error ? error.message : "unknown error"}`,
-            );
+            enqueueKnownProviders();
           }
+        } catch (error) {
+          warnings.push(
+            `${connector.displayName} enrichment failed for ${person.displayName}: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
         }
       }
-      return { person, events: deduplicateEvents(events), edges };
+      return { person: enrichedPerson, events: deduplicateEvents(events), edges };
     },
   );
 

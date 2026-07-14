@@ -6,6 +6,7 @@ import { FeedConnector } from "./feed";
 import { GitHubConnector } from "./github";
 import { GitLabConnector } from "./gitlab";
 import { HackerNewsConnector } from "./hacker-news";
+import { HuggingFaceConnector } from "./hugging-face";
 import { LinkedInManualConnector } from "./linkedin-manual";
 import { OpenAlexConnector } from "./openalex";
 import { SemanticScholarConnector } from "./semantic-scholar";
@@ -24,6 +25,7 @@ export function createConnectorRegistry(): Map<SourceKind, DiscoveryConnector> {
     new SemanticScholarConnector(),
     new CodeforcesConnector(),
     new HackerNewsConnector(),
+    new HuggingFaceConnector(),
     new FeedConnector(),
     new FeedConnector("technical-blogs", "Technical blog feeds"),
     new FeedConnector("project-launches", "Project launch feeds", "project_momentum"),
@@ -55,6 +57,7 @@ export {
   GitHubConnector,
   GitLabConnector,
   HackerNewsConnector,
+  HuggingFaceConnector,
   LinkedInManualConnector,
   OpenAlexConnector,
   SemanticScholarConnector,

@@ -41,6 +41,18 @@ type OpenAlexResponse = {
   meta?: { next_cursor?: string | null };
 };
 
+function authenticate(url: URL) {
+  const apiKey = process.env.OPENALEX_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("OPENALEX_API_KEY is required for OpenAlex requests");
+  }
+  url.searchParams.set("api_key", apiKey);
+  // OpenAlex has ignored mailto since February 2026. Retaining it is harmless
+  // for deployments that still use the address for request attribution.
+  const email = process.env.OPENALEX_EMAIL?.trim();
+  if (email) url.searchParams.set("mailto", email);
+}
+
 function identity(author: OpenAlexAuthor): ExternalIdentity[] {
   return [
     {
@@ -108,22 +120,24 @@ export class OpenAlexConnector implements DiscoveryConnector {
     const since = new Date(context.now.getTime() - lookbackDays * 86_400_000)
       .toISOString()
       .slice(0, 10);
-    const queries = context.settings.queries?.filter(Boolean) ?? [
-      "artificial intelligence",
-      "robotics",
-      "cryptography",
-      "computational biology",
-    ];
+    const queries = (
+      context.settings.queries?.filter(Boolean) ?? [
+        "artificial intelligence",
+        "robotics",
+        "cryptography",
+        "computational biology",
+      ]
+    ).slice(0, 8);
     const events: DiscoveryEvent[] = [];
     const warnings: string[] = [];
 
-    for (const query of queries.slice(0, 8)) {
+    for (const query of queries) {
       const url = new URL("https://api.openalex.org/works");
       url.searchParams.set("search", query);
       url.searchParams.set("filter", `from_publication_date:${since},is_retracted:false`);
       url.searchParams.set("sort", "publication_date:desc,cited_by_count:desc");
       url.searchParams.set("per-page", String(Math.min(50, Math.ceil(maxItems / queries.length))));
-      if (process.env.OPENALEX_EMAIL) url.searchParams.set("mailto", process.env.OPENALEX_EMAIL);
+      authenticate(url);
       try {
         const response = await fetchJson<OpenAlexResponse>(url.toString(), {
           signal: context.signal,
@@ -152,6 +166,7 @@ export class OpenAlexConnector implements DiscoveryConnector {
     url.searchParams.set("filter", `author.id:${authorId},is_retracted:false`);
     url.searchParams.set("sort", "publication_date:desc,cited_by_count:desc");
     url.searchParams.set("per-page", "25");
+    authenticate(url);
     const response = await fetchJson<OpenAlexResponse>(url.toString(), {
       signal: context.signal,
       rateLimitPerSecond: 4,
@@ -167,6 +182,7 @@ export class OpenAlexConnector implements DiscoveryConnector {
     url.searchParams.set("filter", `author.id:${authorId},is_retracted:false`);
     url.searchParams.set("sort", "publication_date:desc");
     url.searchParams.set("per-page", "20");
+    authenticate(url);
     const response = await fetchJson<OpenAlexResponse>(url.toString(), {
       signal: context.signal,
       rateLimitPerSecond: 4,

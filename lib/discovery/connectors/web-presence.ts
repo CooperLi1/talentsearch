@@ -2,8 +2,13 @@ import * as cheerio from "cheerio";
 import { XMLParser } from "fast-xml-parser";
 import { isIP } from "node:net";
 
+import { normalizeContactRoutes } from "@/lib/contact/routes";
+import type { CandidateContactRoute } from "@/lib/domain/types";
+
+import { discoverCrossProfileIdentitiesFromHtml } from "../cross-profile-links";
 import { smartFetch } from "../http";
 import { stableHash } from "../idempotency";
+import { normalizeLinkedInMemberUrl } from "../linkedin-policy";
 import { assertPublicHttpUrl, isBlockedIp, sanitizePlainText } from "../security";
 import type {
   ConnectorEnrichmentContext,
@@ -25,6 +30,45 @@ function redactSensitive(value: unknown, maxLength = 3_000) {
   return sanitizePlainText(value, maxLength)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[contact redacted]")
     .replace(/(?:\+?\d[\d\s().-]{7,}\d)/g, "[contact redacted]");
+}
+
+export function ownedWorkProfileFromHtml(html: string) {
+  const $ = cheerio.load(html);
+  const title = sanitizePlainText(
+    $('meta[property="og:title"]').attr("content") || $("title").text(),
+    300,
+  );
+  const description = redactSensitive(
+    [
+      $('meta[name="description"]').attr("content"),
+      $("main").first().text().slice(0, 3_000),
+    ].filter(Boolean).join(" "),
+    3_000,
+  );
+  const explicitRole = description.match(
+    /\b((?:incoming\s+)?(?:direct\s+)?(?:ph\.?d\.?|doctoral|graduate|undergraduate)\s+student\s+at\s+[A-Z][\p{L}&.' -]{1,100}?(?:University|Institute|Laboratory|Lab|College|School))\b/iu,
+  )?.[1];
+  const profileHeadline = explicitRole || description
+    .split(/(?<=[.!?])\s+/)
+    .find((sentence) =>
+      sentence.length <= 240 &&
+      /\b(?:ph\.?d\.?|doctoral|graduate student|undergraduate|researcher|engineer|founder|student at|works? at)\b/i.test(sentence),
+    );
+  const affiliations = [...description.matchAll(
+    /\b(?:at|with)\s+([A-Z][\p{L}&.' -]{1,100}?(?:University|Institute|Laboratory|Lab|College|School))\b/gu,
+  )]
+    .map((match) => sanitizePlainText(match[1], 200))
+    .filter(Boolean)
+    .slice(0, 6);
+  return title && description
+    ? {
+        title,
+        description,
+        profileHeadline: profileHeadline ? sanitizePlainText(profileHeadline, 500) : undefined,
+        affiliations: [...new Set(affiliations)],
+        contentHash: stableHash(title, description),
+      }
+    : null;
 }
 
 function normalizedName(value: unknown) {
@@ -63,6 +107,65 @@ function isSameOrigin(value: string, knownWebsite: string) {
   const observed = safeHttpUrl(value);
   const known = safeHttpUrl(knownWebsite);
   return Boolean(observed && known && observed.origin === known.origin);
+}
+
+function isAcademicHostname(hostname: string) {
+  return /(?:\.edu|\.ac\.[a-z]{2}|\.edu\.[a-z]{2})$/i.test(hostname);
+}
+
+export function publicContactRoutesFromHtml(
+  html: string,
+  pageUrl: string,
+  stage?: string,
+): CandidateContactRoute[] {
+  const $ = cheerio.load(html);
+  const routes: CandidateContactRoute[] = [];
+  $("a[href]").each((_, element) => {
+    const href = String($(element).attr("href") ?? "").trim();
+    const label = sanitizePlainText($(element).text(), 80);
+    if (/^mailto:/i.test(href)) {
+      routes.push({
+        kind: "email",
+        label: "Public email",
+        url: href.split("?")[0],
+        provenanceUrl: pageUrl,
+        confidence: 0.96,
+        verified: true,
+        audience: "direct",
+      });
+      return;
+    }
+    const target = safeHttpUrl(href, pageUrl);
+    if (!target) return;
+    const isContact =
+      /\b(contact|get in touch|reach me)\b/i.test(label) ||
+      /\/(?:contact|contact-me|get-in-touch)\/?$/i.test(target.pathname);
+    const isInstitutional =
+      isAcademicHostname(target.hostname) &&
+      /\b(lab|department|university|school|faculty|research group)\b/i.test(label);
+    if (isInstitutional) {
+      routes.push({
+        kind: "institutional",
+        label: label || "Institutional profile",
+        url: target.toString(),
+        provenanceUrl: pageUrl,
+        confidence: 0.9,
+        verified: true,
+        audience: "institutional",
+      });
+    } else if (isContact && isSameOrigin(target.toString(), pageUrl)) {
+      routes.push({
+        kind: "contact-page",
+        label: label || "Contact page",
+        url: target.toString(),
+        provenanceUrl: pageUrl,
+        confidence: 0.92,
+        verified: true,
+        audience: "direct",
+      });
+    }
+  });
+  return normalizeContactRoutes(routes, stage);
 }
 
 function list<T>(value: T | T[] | undefined): T[] {
@@ -112,6 +215,17 @@ function identityFor(author: string, profileUrl: string, sameAs?: unknown): Exte
   for (const url of list(sameAs as string | string[] | undefined).slice(0, 10)) {
     const normalized = safeHttpUrl(url);
     if (!normalized) continue;
+    const linkedInProfileUrl = normalizeLinkedInMemberUrl(normalized.toString());
+    if (linkedInProfileUrl) {
+      identities.push({
+        provider: "linkedin-manual",
+        externalId: stableHash(linkedInProfileUrl),
+        profileUrl: linkedInProfileUrl,
+        username: new URL(linkedInProfileUrl).pathname.split("/").filter(Boolean).at(-1),
+        verified: false,
+      });
+      continue;
+    }
     identities.push({
       provider: "website",
       externalId: stableHash(normalized.toString()),
@@ -120,6 +234,20 @@ function identityFor(author: string, profileUrl: string, sameAs?: unknown): Exte
     });
   }
   return identities;
+}
+
+function alternateNamesFor(node: JsonLd | undefined, sourceUrl: string, canonicalName: string) {
+  const canonical = normalizedName(canonicalName);
+  return list(node?.alternateName as string | string[] | undefined)
+    .map((value) => sanitizePlainText(value, 200))
+    .filter((value) => value && normalizedName(value) !== canonical)
+    .slice(0, 12)
+    .map((name) => ({
+      name,
+      sourceUrl,
+      confidence: 0.9,
+      proof: "jsonld-alternate-name" as const,
+    }));
 }
 
 function eventsFromHtml(html: string, pageUrl: string, now: Date): DiscoveryEvent[] {
@@ -136,6 +264,7 @@ function eventsFromHtml(html: string, pageUrl: string, now: Date): DiscoveryEven
   const personNode = nodes.find((node) => typeNames(node).includes("person"));
   const personName = authorName(personNode?.name);
   const profileUrl = personNode ? nodeUrl(personNode, pageUrl) : pageUrl;
+  const alternateNames = alternateNamesFor(personNode, profileUrl, personName);
   const events: DiscoveryEvent[] = [];
 
   for (const node of nodes.slice(0, 80)) {
@@ -154,6 +283,7 @@ function eventsFromHtml(html: string, pageUrl: string, now: Date): DiscoveryEven
     const person: PersonObservation = {
       displayName: author,
       identities: identityFor(author, profileUrl, personNode?.sameAs),
+      alternateNames,
       headline: personNode ? redactSensitive(personNode.description, 500) || undefined : undefined,
       biography: personNode ? redactSensitive(personNode.description, 2_000) || undefined : undefined,
       sourceUrl: profileUrl,
@@ -188,6 +318,7 @@ function eventsFromHtml(html: string, pageUrl: string, now: Date): DiscoveryEven
       const person: PersonObservation = {
         displayName: author,
         identities: identityFor(author, profileUrl, personNode?.sameAs),
+        alternateNames,
         sourceUrl: profileUrl,
       };
       events.push(
@@ -213,6 +344,7 @@ function eventsFromHtml(html: string, pageUrl: string, now: Date): DiscoveryEven
     const person: PersonObservation = {
       displayName: personName,
       identities: identityFor(personName, profileUrl, personNode.sameAs),
+      alternateNames,
       headline: redactSensitive(personNode.jobTitle ?? personNode.description, 500) || undefined,
       biography: redactSensitive(personNode.description, 2_000) || undefined,
       sourceUrl: profileUrl,
@@ -270,6 +402,7 @@ function rebindKnownCandidate(
   event: DiscoveryEvent,
   person: PersonObservation,
   websiteUrl: string,
+  contactRoutes: CandidateContactRoute[] = [],
 ): DiscoveryEvent | null {
   const observedAuthor = normalizedName(event.person.displayName);
   const knownName = normalizedName(person.displayName);
@@ -284,6 +417,10 @@ function rebindKnownCandidate(
     person: {
       ...person,
       websiteUrl,
+      contactRoutes: normalizeContactRoutes(
+        [...(person.contactRoutes ?? []), ...contactRoutes],
+        person.explicitCareerStage,
+      ),
     },
     raw: {
       ...(event.raw ?? {}),
@@ -450,16 +587,108 @@ export class WebPresenceConnector implements DiscoveryConnector {
       },
       signal: context.signal,
     });
+    let contactRoutes: CandidateContactRoute[] = [];
+    let linkedIdentities: ExternalIdentity[] = [];
+    let ownedPageEvidence: ReturnType<typeof ownedWorkProfileFromHtml> = null;
+    try {
+      const profile = await smartFetch(candidateWebsite.toString(), {
+        respectRobots: true,
+        signal: context.signal,
+        rateLimitPerSecond: 0.3,
+        maxBytes: 2_000_000,
+      });
+      if (
+        profile.ok &&
+        (profile.headers.get("content-type") ?? "").includes("html")
+      ) {
+        const html = await profile.text();
+        if (!ACCESS_GATE.test(html.slice(0, 100_000))) {
+          ownedPageEvidence = ownedWorkProfileFromHtml(html);
+          contactRoutes = publicContactRoutesFromHtml(
+            html,
+            candidateWebsite.toString(),
+            context.person.explicitCareerStage,
+          );
+          linkedIdentities = await discoverCrossProfileIdentitiesFromHtml({
+            html,
+            pageUrl: candidateWebsite.toString(),
+            expectedIdentities: context.person.identities,
+            sourceOwned: true,
+            signal: context.signal,
+          });
+        }
+      }
+    } catch {
+      // Contact discovery is optional; work evidence remains usable when it fails.
+    }
+    const identityKeys = new Set<string>();
+    const person: PersonObservation = {
+      ...context.person,
+      headline:
+        context.person.headline ||
+        ownedPageEvidence?.profileHeadline ||
+        ownedPageEvidence?.description.slice(0, 500),
+      biography: context.person.biography || ownedPageEvidence?.description,
+      affiliations: [
+        ...(context.person.affiliations ?? []),
+        ...(ownedPageEvidence?.affiliations ?? []),
+      ].filter((value, index, values) => values.indexOf(value) === index).slice(0, 12),
+      websiteUrl: candidateWebsite.toString(),
+      identities: [...context.person.identities, ...linkedIdentities]
+        .filter((identity) => {
+          const key = `${identity.provider}:${identity.externalId}`.toLowerCase();
+          if (identityKeys.has(key)) return false;
+          identityKeys.add(key);
+          return true;
+        })
+        .slice(0, 10),
+      contactRoutes: normalizeContactRoutes(
+        [...(context.person.contactRoutes ?? []), ...contactRoutes],
+        context.person.explicitCareerStage,
+      ),
+    };
+    const reboundEvents = result.events.flatMap((event) => {
+      const rebound = rebindKnownCandidate(
+        event,
+        person,
+        candidateWebsite.toString(),
+        contactRoutes,
+      );
+      return rebound ? [rebound] : [];
+    });
+    if (linkedIdentities.length && !reboundEvents.some((event) => event.type === "profile_observed")) {
+      reboundEvents.unshift(createDiscoveryEvent({
+        source: "web-presence",
+        sourceExternalId: `linked-profiles:${stableHash(candidateWebsite.toString(), ...linkedIdentities.map((identity) => `${identity.provider}:${identity.externalId}`))}`,
+        type: "profile_observed",
+        title: `Public profiles listed on ${candidateWebsite.hostname}`,
+        description: "Candidate-owned profile links published on the verified personal site.",
+        occurredAt: context.now.toISOString(),
+        sourceUrl: candidateWebsite.toString(),
+        person,
+        tags: ["personal-site", "cross-profile"],
+        confidence: 0.94,
+        now: context.now,
+      }));
+    }
+    if (ownedPageEvidence && linkedIdentities.some((identity) => identity.verified === true)) {
+      reboundEvents.unshift(createDiscoveryEvent({
+        source: "web-presence",
+        sourceExternalId: `owned-work-page:${ownedPageEvidence.contentHash}`,
+        type: "other",
+        title: `${person.displayName}'s public work profile`,
+        description: ownedPageEvidence.description,
+        occurredAt: context.now.toISOString(),
+        sourceUrl: candidateWebsite.toString(),
+        person,
+        tags: ["personal-site", "candidate-owned-work-page"],
+        confidence: 0.9,
+        now: context.now,
+      }));
+    }
     return {
       ...result,
-      events: result.events.flatMap((event) => {
-        const rebound = rebindKnownCandidate(
-          event,
-          context.person,
-          candidateWebsite.toString(),
-        );
-        return rebound ? [rebound] : [];
-      }),
+      events: reboundEvents,
     };
   }
 }

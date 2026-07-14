@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 
-import { graphEdgesToCandidateEvents } from "../lib/discovery/graph";
+import { expandDiscoveryGraph, graphEdgesToCandidateEvents } from "../lib/discovery/graph";
 import type {
+  DiscoveryConnector,
   ExternalIdentity,
   GraphEdge,
   PersonObservation,
@@ -123,6 +124,59 @@ assert.equal(
 assert.equal(
   graphEdgesToCandidateEvents({
     edges: [
+      edge({ relation: "collaborates_with", weight: 0.48, sourceUrl: "https://example.test/repo-a" }),
+      edge({ relation: "collaborates_with", weight: 0.48, sourceUrl: "https://example.test/repo-b" }),
+    ],
+    now,
+  }).length,
+  1,
+  "repeated public collaboration with a strong seed qualifies",
+);
+
+assert.equal(
+  graphEdgesToCandidateEvents({
+    edges: [
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-1" }),
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-2" }),
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-3" }),
+    ],
+    now,
+  }).length,
+  0,
+  "a handful of ordinary interactions must not qualify",
+);
+
+assert.equal(
+  graphEdgesToCandidateEvents({
+    edges: [
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-1" }),
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-2" }),
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-3" }),
+      edge({ relation: "engages_with", weight: 0.2, sourceUrl: "https://example.test/thread-4" }),
+    ],
+    now,
+  }).length,
+  1,
+  "repeated substantive interaction can qualify without popularity metrics",
+);
+
+const nameOnlyTarget: PersonObservation = {
+  displayName: "Same Name",
+  identities: [],
+  sourceUrl: "https://example.test/name-only",
+};
+assert.equal(
+  graphEdgesToCandidateEvents({
+    edges: [edge({ target: nameOnlyTarget, weight: 0.99 })],
+    now,
+  }).length,
+  0,
+  "a display name is never a durable graph identity",
+);
+
+assert.equal(
+  graphEdgesToCandidateEvents({
+    edges: [
       edge({ target: person("candidate-1"), weight: 0.9 }),
       edge({ target: person("candidate-2"), weight: 0.9 }),
     ],
@@ -133,4 +187,57 @@ assert.equal(
   "candidate output must remain bounded",
 );
 
-console.log("discovery graph checks passed");
+const expandedHandles: string[] = [];
+const graphConnector: DiscoveryConnector = {
+  kind: "github",
+  displayName: "Test GitHub",
+  async discover() {
+    return { events: [] };
+  },
+  async expandGraph(context) {
+    const source = context.person.identities[0];
+    expandedHandles.push(source.externalId);
+    if (source.externalId !== "seed") return [];
+    return [
+      edge({ sourceId: "seed", target: person("weak-neighbor"), weight: 0.25 }),
+      edge({ sourceId: "seed", target: person("strong-neighbor"), weight: 0.82 }),
+    ];
+  },
+};
+async function checkBoundedExpansion() {
+  const expansion = await expandDiscoveryGraph({
+    seeds: [person("seed")],
+    connectors: new Map([["github", graphConnector]]),
+    settings: { github: { enabled: true, maxItems: 10 } },
+    maxDepth: 2,
+    maxNodes: 10,
+    now,
+  });
+  assert.equal(expansion.edges.length, 2);
+  assert.deepEqual(
+    expandedHandles,
+    ["seed", "strong-neighbor"],
+    "weak one-hop follows are evidence, but must not become recursive expansion seeds",
+  );
+  const surfaced = graphEdgesToCandidateEvents({ edges: expansion.edges, now });
+  assert.equal(surfaced.length, 1, "a qualified adjacent person enters normal candidate events");
+  assert.equal(surfaced[0].person.identities[0].externalId, "strong-neighbor");
+  assert.equal(
+    Array.isArray(surfaced[0].raw?.graphPath),
+    true,
+    "the surfaced candidate retains an auditable public graph path",
+  );
+
+  const bounded = await expandDiscoveryGraph({
+    seeds: [person("seed")],
+    connectors: new Map([["github", graphConnector]]),
+    settings: { github: { enabled: true, maxItems: 10 } },
+    maxDepth: 1,
+    maxNodes: 10,
+    maxEdgesPerSeed: 1,
+    now,
+  });
+  assert.equal(bounded.edges.length, 1, "per-seed expansion has a hard edge budget");
+}
+
+checkBoundedExpansion().then(() => console.log("discovery graph checks passed"));

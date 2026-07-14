@@ -5,6 +5,7 @@ import type {
   ScoringWeights,
 } from "./types";
 import { clamp } from "./connectors/shared";
+import { evidencePublisher } from "./evidence-publishers";
 
 export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   achievementQuality: 0.25,
@@ -59,32 +60,57 @@ export function scoreCandidate(input: {
       Math.log1p(citations) / 10,
   );
 
-  const recentEvents = events.filter(
-    (event) => now.getTime() - new Date(event.occurredAt).getTime() <= 90 * 86_400_000,
+  const recentEvents = [
+    ...new Map(
+      events
+        .filter(
+          (event) =>
+            !["profile_observed", "social_graph_signal", "identity_observed", "other"].includes(event.type) &&
+            now.getTime() - new Date(event.occurredAt).getTime() <= 90 * 86_400_000,
+        )
+        .map((event) => [`${event.type}:${event.sourceUrl}`, event]),
+    ).values(),
+  ];
+  const activeMonths = new Set(recentEvents.map((event) => event.occurredAt.slice(0, 7))).size;
+  const trajectoryVelocity = clamp(
+    Math.min(0.35, recentEvents.length * 0.045) +
+      Math.min(0.2, activeMonths * 0.07) +
+      Math.min(0.25, Math.log1p(momentum) / 3),
   );
-  const activeWeeks = new Set(recentEvents.map((event) => event.occurredAt.slice(0, 7))).size;
-  const trajectoryVelocity = clamp(recentEvents.length / 8 + activeWeeks / 8 + Math.log1p(momentum) / 18);
 
   const buildEvents = events.filter((event) =>
     ["project_created", "project_momentum", "open_source_contribution"].includes(event.type),
   );
+  const distinctProjects = new Set(buildEvents.map((event) => event.sourceUrl)).size;
   const distinctProjectTags = new Set(buildEvents.flatMap((event) => event.tags ?? [])).size;
   const technicalComplexity = clamp(
     maxMetric(events, "technicalComplexity") *
       Math.max(0.25, maxMetric(events, "technicalComplexityConfidence")),
   );
   const projectOriginality = clamp(
-    buildEvents.length * 0.12 + distinctProjectTags * 0.03 + technicalComplexity * 0.42,
+    (distinctProjects ? 0.04 : 0) +
+      Math.min(0.16, Math.log1p(distinctProjects) / 12) +
+      Math.min(0.04, distinctProjectTags * 0.005) +
+      technicalComplexity * 0.62 +
+      Math.min(0.14, momentum / 2),
   );
 
   const uniqueGraphTargets = new Set(
     edges.map((edge) => `${edge.target.identities[0]?.provider}:${edge.target.identities[0]?.externalId}`),
   ).size;
-  const networkProximity = clamp(
+  const edgeNetworkProximity = clamp(
     edges.reduce((total, edge) => total + clamp(edge.weight), 0) / 5 + uniqueGraphTargets / 50,
   );
+  const eventNetworkProximity = clamp(
+    maxMetric(events, "graphSupportWeight") / 3 +
+      maxMetric(events, "graphSourceIdentities") / 5 +
+      maxMetric(events, "graphRelationTypes") / 8,
+  );
+  const networkProximity = Math.max(edgeNetworkProximity, eventNetworkProximity);
 
-  const sources = new Set(events.map((event) => event.source));
+  const sources = new Set(
+    events.map(evidencePublisher).filter((value): value is string => Boolean(value)),
+  );
   const evidenceDiversity = clamp(sources.size / 4 + Math.min(0.25, events.length / 40));
 
   const followers = Math.max(maxMetric(events, "followers"), maxMetric(events, "friendOfCount"));

@@ -36,6 +36,7 @@ type GitLabProject = {
   last_activity_at: string;
   topics?: string[];
   default_branch?: string | null;
+  visibility?: string;
   namespace: GitLabNamespace;
 };
 
@@ -52,10 +53,25 @@ type GitLabUser = {
   website_url?: string | null;
 };
 
-function headers(): HeadersInit {
-  return process.env.GITLAB_TOKEN
-    ? { "private-token": process.env.GITLAB_TOKEN }
-    : {};
+async function gitLabJson<T>(
+  url: string,
+  input: { signal?: AbortSignal; allowToken?: boolean } = {},
+) {
+  const token = input.allowToken ? process.env.GITLAB_TOKEN?.trim() : undefined;
+  try {
+    return await fetchJson<T>(url, {
+      headers: token ? { "private-token": token } : {},
+      signal: input.signal,
+      rateLimitPerSecond: 2,
+    });
+  } catch (error) {
+    // A read token can lose or narrow access over time. Retry without it only
+    // when GitLab says permission was denied so public enrichment still works.
+    if (token && error instanceof Error && /HTTP (?:401|403)\b/.test(error.message)) {
+      return fetchJson<T>(url, { signal: input.signal, rateLimitPerSecond: 2 });
+    }
+    throw error;
+  }
 }
 
 function namespacePerson(namespace: GitLabNamespace): PersonObservation {
@@ -134,22 +150,31 @@ export class GitLabConnector implements DiscoveryConnector {
 
   async discover(context: ConnectorRunContext): Promise<ConnectorRunResult> {
     const maxItems = Math.min(100, context.settings.maxItems ?? 30);
-    const queries = context.settings.queries?.filter(Boolean) ?? ["ai", "robotics", "developer tools"];
+    const lookbackDays = Math.min(90, Math.max(1, context.settings.lookbackDays ?? 14));
+    const lastActivityAfter = new Date(
+      context.now.getTime() - lookbackDays * 86_400_000,
+    ).toISOString();
+    const queries = (
+      context.settings.queries?.filter(Boolean) ?? ["ai", "robotics", "developer tools"]
+    ).slice(0, 8);
     const events: DiscoveryEvent[] = [];
     const warnings: string[] = [];
 
-    for (const query of queries.slice(0, 6)) {
+    for (const query of queries) {
       const url = new URL("https://gitlab.com/api/v4/projects");
       url.searchParams.set("search", query);
       url.searchParams.set("order_by", "last_activity_at");
       url.searchParams.set("sort", "desc");
       url.searchParams.set("simple", "true");
+      url.searchParams.set("visibility", "public");
+      url.searchParams.set("active", "true");
+      url.searchParams.set("last_activity_after", lastActivityAfter);
       url.searchParams.set("per_page", String(Math.ceil(maxItems / queries.length)));
       try {
-        const projects = await fetchJson<GitLabProject[]>(url.toString(), {
-          headers: headers(),
+        // Global discovery is always anonymous and public-only. An optional
+        // token is reserved for the later, bounded enrichment pass.
+        const projects = await gitLabJson<GitLabProject[]>(url.toString(), {
           signal: context.signal,
-          rateLimitPerSecond: 2,
         });
         for (const project of projects) {
           if (project.namespace?.kind !== "user") continue;
@@ -174,16 +199,17 @@ export class GitLabConnector implements DiscoveryConnector {
       (item) => item.provider === "gitlab" && item.username,
     );
     if (!identity?.username) return null;
-    const users = await fetchJson<GitLabUser[]>(
+    const users = await gitLabJson<GitLabUser[]>(
       `https://gitlab.com/api/v4/users?username=${encodeURIComponent(identity.username)}`,
-      { headers: headers(), signal: context.signal, rateLimitPerSecond: 2 },
+      { signal: context.signal, allowToken: true },
     );
     const user = users.find((item) => item.username === identity.username);
     if (!user) return null;
-    const projects = await fetchJson<GitLabProject[]>(
+    const projects = await gitLabJson<GitLabProject[]>(
       `https://gitlab.com/api/v4/users/${user.id}/projects?order_by=last_activity_at&sort=desc&per_page=15`,
-      { headers: headers(), signal: context.signal, rateLimitPerSecond: 2 },
+      { signal: context.signal, allowToken: true },
     );
+    const publicProjects = projects.filter((project) => project.visibility === "public");
     const person: PersonObservation = {
       displayName: sanitizePlainText(user.name || user.username, 200),
       identities: [
@@ -221,34 +247,24 @@ export class GitLabConnector implements DiscoveryConnector {
           .slice(0, 30)
       : [];
     const analyses = await Promise.all(
-      projects.slice(0, 3).map(async (project) => {
+      publicProjects.slice(0, 3).map(async (project) => {
         try {
           const base = `https://gitlab.com/api/v4/projects/${project.id}`;
+          const request = <T,>(url: string) =>
+            gitLabJson<T>(url, {
+              signal: context.signal,
+              allowToken: true,
+            });
           const [tree, languages, contributors, commits, releases] = await Promise.all([
-            fetchJson<Array<{ path: string; type: string }>>(
+            request<Array<{ path: string; type: string }>>(
               `${base}/repository/tree?recursive=true&per_page=100`,
-              { headers: headers(), signal: context.signal, rateLimitPerSecond: 2 },
             ),
-            fetchJson<Record<string, number>>(`${base}/languages`, {
-              headers: headers(),
-              signal: context.signal,
-              rateLimitPerSecond: 2,
-            }).catch(() => ({})),
-            fetchJson<Array<{ commits?: number }>>(`${base}/repository/contributors?per_page=100`, {
-              headers: headers(),
-              signal: context.signal,
-              rateLimitPerSecond: 2,
-            }).catch(() => []),
-            fetchJson<unknown[]>(`${base}/repository/commits?per_page=100`, {
-              headers: headers(),
-              signal: context.signal,
-              rateLimitPerSecond: 2,
-            }).catch(() => []),
-            fetchJson<unknown[]>(`${base}/releases?per_page=30`, {
-              headers: headers(),
-              signal: context.signal,
-              rateLimitPerSecond: 2,
-            }).catch(() => []),
+            request<Record<string, number>>(`${base}/languages`).catch(() => ({})),
+            request<Array<{ commits?: number }>>(
+              `${base}/repository/contributors?per_page=100`,
+            ).catch(() => []),
+            request<unknown[]>(`${base}/repository/commits?per_page=100`).catch(() => []),
+            request<unknown[]>(`${base}/releases?per_page=30`).catch(() => []),
           ]);
           return analyzeRepositoryInventory({
             tree: tree as RepositoryTreeEntry[],
@@ -270,7 +286,9 @@ export class GitLabConnector implements DiscoveryConnector {
     return {
       events: [
         profile,
-        ...projects.map((project, index) => projectEvent(project, context.now, analyses[index])),
+        ...publicProjects.map((project, index) =>
+          projectEvent(project, context.now, analyses[index]),
+        ),
       ],
     };
   }

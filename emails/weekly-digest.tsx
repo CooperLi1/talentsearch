@@ -17,7 +17,6 @@ import {
 
 import type {
   DigestCandidate,
-  DigestConfidence,
   WeeklyDigestEmailProps,
 } from "@/lib/email/types"
 
@@ -26,7 +25,6 @@ const colors = {
   paper: "#F1EEE6",
   card: "#FCFBF7",
   line: "#D4CFC3",
-  acid: "#DDFB53",
   muted: "#6F6C63",
   blue: "#3459F5",
   white: "#FFFFFF",
@@ -63,10 +61,6 @@ function formatDate(value: string, options?: Intl.DateTimeFormatOptions) {
   }).format(date)
 }
 
-function confidenceLabel(confidence: DigestConfidence) {
-  return `${confidence.slice(0, 1).toUpperCase()}${confidence.slice(1)} identity confidence`
-}
-
 function candidateInitials(name: string) {
   const initials = name
     .trim()
@@ -84,10 +78,7 @@ function CandidateCard({
   candidate: DigestCandidate
 }) {
   const profileUrl = safeHttpUrl(candidate.profileUrl)
-  const sources = candidate.sources
-    .map((source) => ({ ...source, url: safeHttpUrl(source.url) }))
-    .filter((source): source is typeof source & { url: string } => Boolean(source.url))
-  const primarySource = sources.at(0)
+  const facts = candidate.facts.slice(0, 5)
 
   return (
     <Section className="candidate-card" style={candidateCard}>
@@ -99,69 +90,36 @@ function CandidateCard({
           <Heading as="h2" style={candidateName}>
             {candidate.name}
           </Heading>
-          <Text style={candidateHeadline}>{candidate.headline}</Text>
         </Column>
       </Row>
 
-      <Row>
-        <Column>
-          <Text style={metadata}>
-            {[candidate.location, confidenceLabel(candidate.confidence)]
-              .filter(Boolean)
-              .join("  /  ")}
-          </Text>
-        </Column>
-      </Row>
-
-      {candidate.newEvent ? (
-        <Section style={eventPanel}>
-          <Text style={eventEyebrow}>New signal</Text>
-          <Text style={eventTitle}>{candidate.newEvent.title}</Text>
-          {candidate.newEvent.summary ? (
-            <Text style={eventSummary}>{candidate.newEvent.summary}</Text>
-          ) : null}
-          {candidate.newEvent.occurredAt ? (
-            <Text style={eventDate}>
-              {formatDate(candidate.newEvent.occurredAt)}
-            </Text>
-          ) : null}
-          {primarySource ? (
-            <Link href={primarySource.url} style={eventSourceLink}>
-              Verify at {primarySource.label}
-            </Link>
-          ) : null}
-        </Section>
-      ) : null}
-
-      {candidate.confidence !== "high" ? (
-        <Text style={identityCaution}>
-          Confirm that the linked records belong to the same person before contact.
-        </Text>
-      ) : null}
-
-      <Text style={summary}>{candidate.summary}</Text>
-
-      <Section style={reasonPanel}>
-        <Text style={reasonLabel}>Why now</Text>
-        <Text style={reasonText}>{candidate.whyNow}</Text>
-        <Hr style={reasonDivider} />
-        <Text style={reasonLabel}>Why still early</Text>
-        <Text style={reasonText}>{candidate.earlyness}</Text>
+      <Section style={factsPanel}>
+        {facts.map((fact, factIndex) => {
+          const sources = fact.sources
+            .map((source) => ({ ...source, url: safeHttpUrl(source.url) }))
+            .filter((source): source is typeof source & { url: string } => Boolean(source.url))
+          return (
+            <Row key={`${candidate.id}-fact-${factIndex}`} style={factRow}>
+              <Column style={factBulletColumn} valign="top">
+                <Text style={factBullet}>•</Text>
+              </Column>
+              <Column valign="top">
+                <Text style={factText}>{fact.text}</Text>
+                {sources.length ? (
+                  <Text style={factSources}>
+                    {sources.map((source, sourceIndex) => (
+                      <span key={`${source.url}-${sourceIndex}`}>
+                        {sourceIndex > 0 ? <span style={sourceSeparator}> / </span> : null}
+                        <Link href={source.url} style={sourceLink}>{source.label}</Link>
+                      </span>
+                    ))}
+                  </Text>
+                ) : null}
+              </Column>
+            </Row>
+          )
+        })}
       </Section>
-
-      {sources.length ? (
-        <Section style={sourcesPanel}>
-          <Text style={sourcesLabel}>Evidence</Text>
-          {sources.slice(0, 6).map((source, sourceIndex) => (
-            <span key={`${source.url}-${sourceIndex}`}>
-              {sourceIndex > 0 ? <span style={sourceSeparator}> / </span> : null}
-              <Link href={source.url} style={sourceLink}>
-                {source.label}
-              </Link>
-            </span>
-          ))}
-        </Section>
-      ) : null}
 
       {profileUrl ? (
         <Button href={profileUrl} style={profileButton}>
@@ -208,18 +166,10 @@ export function WeeklyDigestEmail({
             </Row>
             <Hr style={mastheadRule} />
             <Heading as="h1" style={heroHeading} className="hero-heading">
-              Candidates for this week&apos;s review.
+              This week&apos;s candidates.
             </Heading>
             <Text style={heroCopy}>
-              {recipientName ? `${recipientName}, this week's` : "This week's"} brief covers
-              new work from research, open-source projects, competitions, and trusted networks.
-            </Text>
-          </Section>
-
-          <Section style={editorialIntro}>
-            <Text style={editorialKicker}>Before you decide</Text>
-            <Text style={editorialCopy}>
-              Open the linked evidence and confirm identity before making contact.
+              {recipientName ? `${recipientName}, here are` : "Here are"} the strongest new people in the queue.
             </Text>
           </Section>
 
@@ -236,12 +186,12 @@ export function WeeklyDigestEmail({
 
           {safeDashboardUrl ? (
             <Section style={actionPanel}>
-              <Text style={actionKicker}>Review actions</Text>
+              <Text style={actionKicker}>In the dashboard</Text>
               <Heading as="h2" style={actionHeading}>
-                Shortlist, watch, pass, or correct a record.
+                Review the full records.
               </Heading>
               <Text style={actionCopy}>
-                Save a decision after checking the linked evidence.
+                Open a dossier for sources, identity notes, and contact routes.
               </Text>
               <Button href={safeDashboardUrl} style={dashboardButton}>
                 Open the review queue
@@ -251,7 +201,7 @@ export function WeeklyDigestEmail({
 
           <Section style={footer}>
             <Text style={footerBrand}>UNFOUND</Text>
-            <Text style={footerTagline}>Internal candidate brief.</Text>
+            <Text style={footerTagline}>Internal use only.</Text>
             <Text style={footerText}>
               Built from public sources. Verify identity and context before outreach,
               especially when a candidate may be under 18.
@@ -331,28 +281,6 @@ const heroCopy: CSSProperties = {
   lineHeight: "25px",
 }
 
-const editorialIntro: CSSProperties = {
-  padding: "44px 36px 30px",
-}
-
-const editorialKicker: CSSProperties = {
-  margin: "0 0 12px",
-  color: colors.blue,
-  fontFamily: fontMono,
-  fontSize: "10px",
-  fontWeight: 700,
-  letterSpacing: "0.8px",
-  textTransform: "uppercase",
-}
-
-const editorialCopy: CSSProperties = {
-  margin: 0,
-  color: colors.ink,
-  fontSize: "20px",
-  letterSpacing: "-0.4px",
-  lineHeight: "30px",
-}
-
 const candidateCard: CSSProperties = {
   margin: "18px 0",
   padding: "30px 30px 32px",
@@ -394,132 +322,38 @@ const candidateName: CSSProperties = {
   lineHeight: "29px",
 }
 
-const candidateHeadline: CSSProperties = {
-  margin: "5px 0 0",
-  color: colors.muted,
-  fontSize: "13px",
-  lineHeight: "19px",
+const factsPanel: CSSProperties = {
+  margin: "24px 0 0",
 }
 
-const metadata: CSSProperties = {
-  margin: "18px 0 0",
+const factRow: CSSProperties = {
+  margin: "0 0 13px",
+}
+
+const factBulletColumn: CSSProperties = {
+  width: "18px",
+}
+
+const factBullet: CSSProperties = {
+  margin: 0,
+  color: colors.blue,
+  fontSize: "16px",
+  lineHeight: "22px",
+}
+
+const factText: CSSProperties = {
+  margin: 0,
+  color: colors.ink,
+  fontSize: "14px",
+  lineHeight: "22px",
+}
+
+const factSources: CSSProperties = {
+  margin: "4px 0 0",
   color: colors.muted,
   fontFamily: fontMono,
   fontSize: "9px",
-  letterSpacing: "0.3px",
   lineHeight: "15px",
-  textTransform: "uppercase",
-}
-
-const eventPanel: CSSProperties = {
-  margin: "22px 0 0",
-  padding: "18px 20px",
-  backgroundColor: colors.acid,
-}
-
-const eventEyebrow: CSSProperties = {
-  margin: "0 0 6px",
-  color: colors.ink,
-  fontFamily: fontMono,
-  fontSize: "9px",
-  fontWeight: 700,
-  letterSpacing: "0.7px",
-  textTransform: "uppercase",
-}
-
-const eventTitle: CSSProperties = {
-  margin: 0,
-  color: colors.ink,
-  fontSize: "17px",
-  fontWeight: 650,
-  letterSpacing: "-0.25px",
-  lineHeight: "23px",
-}
-
-const eventSummary: CSSProperties = {
-  margin: "8px 0 0",
-  color: "#36372D",
-  fontSize: "13px",
-  lineHeight: "20px",
-}
-
-const eventDate: CSSProperties = {
-  margin: "10px 0 0",
-  color: "#535541",
-  fontFamily: fontMono,
-  fontSize: "9px",
-  lineHeight: "14px",
-}
-
-const eventSourceLink: CSSProperties = {
-  display: "inline-block",
-  marginTop: "9px",
-  color: colors.ink,
-  fontSize: "11px",
-  fontWeight: 700,
-  textDecoration: "underline",
-  textUnderlineOffset: "2px",
-}
-
-const identityCaution: CSSProperties = {
-  margin: "18px 0 0",
-  padding: "12px 14px",
-  backgroundColor: "#FFF3C4",
-  borderLeft: `3px solid ${colors.ink}`,
-  color: colors.ink,
-  fontSize: "12px",
-  lineHeight: "18px",
-}
-
-const summary: CSSProperties = {
-  margin: "24px 0 0",
-  color: colors.ink,
-  fontSize: "15px",
-  lineHeight: "24px",
-}
-
-const reasonPanel: CSSProperties = {
-  margin: "24px 0 0",
-  padding: "20px",
-  backgroundColor: "#EAE7DE",
-}
-
-const reasonLabel: CSSProperties = {
-  margin: 0,
-  color: colors.muted,
-  fontFamily: fontMono,
-  fontSize: "9px",
-  fontWeight: 700,
-  letterSpacing: "0.7px",
-  textTransform: "uppercase",
-}
-
-const reasonText: CSSProperties = {
-  margin: "7px 0 0",
-  color: colors.ink,
-  fontSize: "13px",
-  lineHeight: "20px",
-}
-
-const reasonDivider: CSSProperties = {
-  margin: "17px 0",
-  borderColor: "#CECAC0",
-}
-
-const sourcesPanel: CSSProperties = {
-  margin: "22px 0 0",
-  paddingTop: "16px",
-  borderTop: `1px solid ${colors.line}`,
-}
-
-const sourcesLabel: CSSProperties = {
-  margin: "0 0 8px",
-  color: colors.muted,
-  fontFamily: fontMono,
-  fontSize: "9px",
-  fontWeight: 700,
-  letterSpacing: "0.7px",
-  textTransform: "uppercase",
 }
 
 const sourceLink: CSSProperties = {

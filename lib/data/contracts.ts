@@ -1,8 +1,10 @@
 import type {
+  CandidateContactRoute,
   CandidateStatus,
   CriterionSignal,
   DeliveryStatus,
   DiscoverySource,
+  EditableSourceConfiguration,
   EvidenceLink,
   SubscriberStatus,
 } from "@/lib/domain/types";
@@ -22,7 +24,11 @@ export interface SourceRecord {
 }
 
 export type SourceSetupRequirement =
+  | "openalex_connection"
+  | "hugging_face_queries"
   | "x_connection"
+  | "x_data_use_approval"
+  | "x_queries"
   | "web_search_connection"
   | "linkedin_profiles"
   | "feed_urls"
@@ -32,11 +38,16 @@ export type SourceSetupRequirement =
 export type UpdateSourceEnabledResult =
   | { ok: true; source: DiscoverySource }
   | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "invalid_configuration"; message: string }
   | {
       ok: false;
       reason: "setup_required";
       requirement: SourceSetupRequirement;
     };
+
+export type UpdateSourceConfigurationResult = UpdateSourceEnabledResult;
+
+export type SourceConfigurationUpdate = EditableSourceConfiguration;
 
 export interface CreateIngestionRunInput {
   workspaceId: string | number;
@@ -104,6 +115,12 @@ export interface MergeCandidateObservationInput {
   biography?: string | null;
   location?: string | null;
   affiliations?: string[];
+  alternateNames?: Array<{
+    name: string;
+    sourceUrl: string;
+    confidence: number;
+    proof: string;
+  }>;
   avatarUrl?: string | null;
   websiteUrl?: string | null;
   sourceUrl: string;
@@ -112,6 +129,7 @@ export interface MergeCandidateObservationInput {
   providerHandle?: string | null;
   providerProfileUrl?: string | null;
   providerVerified: boolean;
+  contactRoutes?: CandidateContactRoute[];
   seenAt?: string;
 }
 
@@ -241,6 +259,11 @@ export interface UpdateCandidateIntelligenceInput {
   embeddingModel?: string | null;
   sourceCount?: number;
   lastSeenAt?: string;
+  briefEvidenceFingerprint?: string | null;
+  briefGeneratedAt?: string | null;
+  briefModel?: string | null;
+  briefPromptVersion?: string | null;
+  briefClaimedUntil?: string | null;
 }
 
 export interface CriterionProfileVersionInput {
@@ -251,6 +274,11 @@ export interface CriterionProfileVersionInput {
   minimumScore?: number;
   minimumConfidence?: number;
   weeklyCandidateCount?: number;
+  digestCadence?: import("@/lib/domain/types").DigestCadence;
+  digestDaysOfWeek?: number[];
+  digestDeliveryHourUtc?: number;
+  digestDeliveryMinuteUtc?: number;
+  digestPreparationLeadHours?: number;
   learningRate?: number;
   explorationRate?: number;
   trainingSampleCount?: number;

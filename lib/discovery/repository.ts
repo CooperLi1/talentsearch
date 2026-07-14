@@ -18,6 +18,9 @@ export type EnrichmentTarget = {
   events: DiscoveryEvent[];
   previousSummary?: string;
   score?: number;
+  briefEvidenceFingerprint?: string;
+  researchPass?: number;
+  researchRevision?: number;
 };
 
 export interface DiscoveryRepository {
@@ -55,6 +58,34 @@ export interface DiscoveryRepository {
     workspaceId: string,
     limit: number,
   ): Promise<EnrichmentTarget[]>;
+  recordEnrichmentAttempt(input: {
+    workspaceId: string;
+    candidateId: string;
+    attemptedAt: string;
+    eventCount: number;
+    researchPass?: number;
+    researchRevision?: number;
+  }): Promise<void>;
+  listIntelligenceTargets(
+    workspaceId: string,
+    limit: number,
+  ): Promise<EnrichmentTarget[]>;
+  listBriefingTargets(
+    workspaceId: string,
+    limit: number,
+  ): Promise<EnrichmentTarget[]>;
+  releaseCandidateBrief(
+    workspaceId: string,
+    candidateId: string,
+  ): Promise<void>;
+  listGraphExpansionSeeds(
+    workspaceId: string,
+    limit: number,
+  ): Promise<EnrichmentTarget[]>;
+  bindGraphExpansionSeeds(
+    workspaceId: string,
+    seeds: EnrichmentTarget[],
+  ): Promise<void>;
   listCandidateEvents(workspaceId: string, candidateId: string): Promise<DiscoveryEvent[]>;
   updateCandidateIntelligence(input: {
     workspaceId: string;
@@ -63,6 +94,12 @@ export interface DiscoveryRepository {
     summary: CandidateSummary;
     embedding: number[] | null;
     embeddingModel: string | null;
+    sourceCount?: number;
+    persistSummary?: boolean;
+    briefEvidenceFingerprint?: string;
+    briefGeneratedAt?: string;
+    briefModel?: string;
+    briefPromptVersion?: string;
   }): Promise<void>;
   saveConnectorCursor(input: {
     workspaceId: string;

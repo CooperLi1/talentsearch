@@ -1,4 +1,4 @@
-import { updateSourceEnabled } from "@/lib/data/talent-radar";
+import { updateSourceConfiguration, updateSourceEnabled } from "@/lib/data/talent-radar";
 import type { SourceSetupRequirement } from "@/lib/data/contracts";
 
 import { ApiError, getWorkspaceId, readJson, withDashboard } from "../_lib/http";
@@ -7,7 +7,11 @@ import { sourceUpdateSchema } from "../_lib/schemas";
 export const runtime = "nodejs";
 
 const setupMessages: Record<SourceSetupRequirement, string> = {
+  openalex_connection: "Finish the OpenAlex connection before including this source.",
+  hugging_face_queries: "Add at least one Hugging Face topic before including this source.",
   x_connection: "Finish the X connection before including this source.",
+  x_data_use_approval: "Confirm the approved X data use before including this source.",
+  x_queries: "Add at least one X search query before including this source.",
   web_search_connection: "Finish public web search setup before including this source.",
   linkedin_profiles: "Add at least one reviewed LinkedIn profile before including this source.",
   feed_urls: "Add at least one feed or site before including this source.",
@@ -18,10 +22,15 @@ const setupMessages: Record<SourceSetupRequirement, string> = {
 export async function PATCH(request: Request) {
   return withDashboard(request, async () => {
     const input = await readJson(request, sourceUpdateSchema);
-    const result = await updateSourceEnabled(getWorkspaceId(), input.id, input.enabled);
+    const result = "enabled" in input
+      ? await updateSourceEnabled(getWorkspaceId(), input.id, input.enabled)
+      : await updateSourceConfiguration(getWorkspaceId(), input.id, input.config);
 
     if (!result.ok) {
       if (result.reason === "not_found") throw new ApiError(404, "Source not found");
+      if (result.reason === "invalid_configuration") {
+        throw new ApiError(400, result.message);
+      }
       throw new ApiError(409, setupMessages[result.requirement]);
     }
 

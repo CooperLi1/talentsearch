@@ -39,3 +39,107 @@ A header can be individually reasonable and still break another defense. In Chro
 ## Filter effects can capture fixed descendants
 
 `filter` and `backdrop-filter` establish containing blocks for fixed-position descendants. A mobile bottom navigation nested inside a blurred fixed header can therefore resolve `bottom: 0` against the header instead of the viewport and cover the logo. Mount viewport-fixed controls outside filtered ancestors, or disable the ancestor effect at that breakpoint, and verify geometry with `getBoundingClientRect` rather than trusting a full-page screenshot.
+
+## Saved discovery settings must match executable budgets
+
+An operator should never be able to save a query, URL, page definition, or result cap that the connector silently ignores. Keep dashboard validation, stored defaults, and runtime slice limits aligned, and test that every accepted configured item can execute. A visible saved setting that never runs is worse than a clear bounded limit because it creates false coverage.
+
+## Feed bylines are plural evidence, not one string
+
+RSS and Atom creator fields can be arrays, nested author objects, or generic publisher bylines. Flatten and deduplicate real people, emit one bounded event and stable external ID per author, and narrowly reject obvious staff/team/publisher placeholders. Collapsing an author array loses candidates; treating the publisher as a person pollutes identity resolution.
+
+## Apply global limits after fair source interleaving
+
+A multi-source connector that appends results sequentially and truncates once at the end lets the first prolific source starve every later source. Bound each source independently, then round-robin the groups before applying the global cap. This preserves predictable cost while making configured source coverage real instead of order-dependent.
+
+## Runtime budgets must not expand with the workload
+
+A configured enrichment or summarization cap stops protecting cost and function duration if the runtime takes the maximum of that cap and the number of affected records. Rank the full workload, then process only the fixed budget. Persist the remainder for later bounded runs instead of letting a large first ingestion hit the platform timeout and strand its run state.
+
+## Zero is a value, not a processing-state marker
+
+A candidate can be reviewed correctly and still receive a score of zero. Backlog selection must use explicit review output, such as populated score components or a reviewed timestamp, instead of treating `score = 0` as "not processed." Otherwise valid zero-score records are selected forever and starve the queue behind them.
+
+## Backlog work must not use the finished-work ranking
+
+A score-descending candidate query is appropriate for an operator queue but can permanently starve automatic scoring: reviewed candidates stay at the top while zero-score candidates never enter the bounded batch. Background review must drain an explicit pending cohort in stable oldest-first order, then use ranked records only to fill spare capacity. Keep expensive narrative generation under a smaller cap than deterministic scoring so the backlog can advance without exceeding runtime or model budgets.
+
+## Contactability is an evidence claim
+
+A contact route must be explicit on a verified candidate-owned or provider profile and retain its source URL; never synthesize or guess an address. For likely minors, suppress direct email and personal contact forms even when public, and expose only verified public profiles or institutional routes. Contact convenience must not override identity confidence or age-sensitive privacy.
+
+## Multi-profile observations must preserve binding immutability
+
+A discovery observation can carry several provider identities, but resolving only the first silently prevents cross-source linking. Resolve every bounded identity, then bind secondary profiles only when the association and provider subject are strong enough. Once a provider subject is attached to a candidate, a later observation must never reassign it automatically; conflicting evidence belongs in an operator-review hypothesis.
+
+## JSON predicates and observation windows need explicit handling
+
+PostgREST equality helpers do not reliably serialize an object literal as a JSON comparison value; use an explicit JSON filter string and exercise it against the real database. Any upserted first/last observation pair must also merge both bounds with the stored window. Updating only the last timestamp can violate ordering when a later ingestion discovers older evidence.
+
+## A graph edge is operational only when both endpoints stay candidate-bound
+
+Persisting account nodes and edges is not enough to support candidate discovery or neighbor queries. Bind verified provider nodes to their candidate records, preserve that binding when later edge observations upsert the node, and store the public evidence path on every graph-derived event. Otherwise the graph may render as connected while scheduled expansion, scoring, and candidate-to-candidate traversal cannot use it.
+
+## Cross-profile links have different proof strengths
+
+A social link on a candidate-owned page is a useful lead, but only an explicit `rel=me`, Person `sameAs`, matching verified handle, or durable provider subject should bind it automatically. Ordinary profile links should create review hypotheses, and repositories, share routes, employer sites, and same-name search results should not become identities. Preserve the exact source URL so an operator can audit every association.
+
+## Review cutoffs must be calibrated against actual score yield
+
+A theoretical 0–100 score does not make a preset meaningful. Measure the distribution produced by current connectors and scoring rules, then choose broad, balanced, and selective cutoffs that return useful cohort sizes on representative data. Keep compatibility for stored legacy presets so a scoring recalibration cannot silently empty the operator queue.
+
+## Generated briefs need an explicit completion contract
+
+Deterministic event titles must not masquerade as a synthesized operator brief. Require a minimum set of generated facts, validate every cited URL against stored evidence, and show a clear pending state until that contract is satisfied. Persist the prompt-policy version separately from an evidence hash and require the current version at display time; invalidating a fingerprint alone does not stop stale copy from rendering while a backlog drains. Reuse the same brief representation across queues, search results, and email so one surface cannot quietly fall back to lower-quality copy.
+
+## Structured model schemas are only transport validation
+
+Model providers support a narrower JSON Schema subset than application validators; URI-format constraints can reject an otherwise valid structured-output request before generation. Keep provider schemas to portable shapes, then perform exact URL, provenance, and business-rule validation against stored evidence before marking derived content complete.
+
+## Enrichment and surfacing need separate completion gates
+
+A candidate can be worth briefing before independent corroboration exists, but that does not make them ready for an operator queue or email. Drain the briefing backlog broadly, rotate enrichment toward low-coverage records, and enforce independent-publisher coverage only at the surfacing boundary. Counting multiple pages from one platform as multiple sources defeats the gate.
+
+## Hidden source diversity is not operator-visible corroboration
+
+A record can have events from several connectors while every displayed claim still cites one host. Enforce publisher diversity on the citations that reach the queue and email, and group search-located pages by their final citation host. A search provider pointing back to GitHub is GitHub evidence, not an independent source.
+
+## Repository ownership and scoring evidence must survive round trips
+
+Provider endpoints that list repositories may include forks even when the user owns the namespace. Exclude forks before attribution and complexity analysis, and audit stored claims when this invariant changes. Persist metrics and tags with each event; otherwise later background rescoring sees only prose, silently drops technical depth to zero, and rewards project quantity instead of inspectable quality.
+
+## Model-written summaries are not evidence
+
+Never feed an earlier model summary back as the factual record for a later model call. Persist the connector-extracted excerpt separately and ground every later generation in that raw public text. Otherwise one plausible hallucination acquires the appearance of source evidence and can survive citation checks.
+
+## A submission is not proof of authorship
+
+A public account submitting or sharing a link proves the account action, not that the account owner made the linked work. Promote a submission into candidate achievement evidence only when the source explicitly attributes authorship, such as a first-person Show HN description. Keep ordinary sharing as low-confidence graph context.
+
+## Operational ordering can be undone after hydration
+
+A database query can correctly prioritize a backlog and still fail if application code re-sorts the hydrated records by a stale field. Treat the database claim order as authoritative for bounded workers, and test the first selected records against the intended rotation policy.
+
+## Coverage counters must share the surfacing threshold
+
+Publisher counts used for scheduling, scoring, queue gates, and UI labels must all exclude the same low-confidence and non-substantive events. If one refresh path counts weak locator matches, it can undo a database correction and make a single-source record look corroborated again.
+
+## Enrichment should optimize marginal surfacing yield
+
+A low-coverage-first backlog can let zero-score, zero-source records consume every bounded research slot while strong single-source candidates remain one corroborating source away from the operator queue. Rank due enrichment by demonstrated quality first, then use source coverage and oldest attempt as tie-breakers. Automatic review should establish quality; enrichment should spend its separate budget where another source is most likely to produce an operator-ready profile.
+
+## Scheduled workers need single-purpose budgets
+
+A source-enrichment worker can fit its network budget and still time out if it also drains a model-generation backlog before returning. Keep research, deterministic scoring, and LLM briefing on independently bounded schedules with separate durable state. Automatic does not mean synchronous: decoupled cron workers are still automatic, and they keep one slow provider from stranding unrelated work.
+
+## Failed model work needs durable backoff
+
+Releasing a failed generation claim immediately makes the same high-priority records eligible on every scheduled run. Deterministic failures then consume the budget forever and starve the backlog behind them. Reuse the durable claim deadline as a retry-after time, or persist an explicit retry schedule, and back off contract failures without ever publishing fallback copy.
+
+## Deep research needs rotating passes, not one oversized request
+
+Repeating one broad search more often mostly returns cached duplicates, while raising a synchronous batch cap makes timeout loss more likely. Claim candidates atomically, run several bounded passes with distinct identity, work, and alias/collaborator query plans, and persist progress after every pass. Increase throughput by scheduling more small claimed batches, then move completed candidates onto a slower maintenance cadence.
+
+## Finish research against the revision you claimed
+
+An enrichment pass can discover a new alias, profile, website, or event while it is running. If completion simply marks the candidate current, that newly created lead can be stranded until maintenance cadence. Claim a durable input revision, complete only through that revision, and immediately requeue when the stored input revision advanced during the pass. This turns every new identity lead into bounded follow-up work without creating an unbounded synchronous crawl.

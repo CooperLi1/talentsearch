@@ -1,3 +1,5 @@
+import type { CandidateContactRoute } from "@/lib/domain/types";
+
 export const SOURCE_KINDS = [
   "github",
   "gitlab",
@@ -5,6 +7,7 @@ export const SOURCE_KINDS = [
   "crossref",
   "arxiv",
   "semantic-scholar",
+  "hugging-face",
   "codeforces",
   "hacker-news",
   "rss",
@@ -28,6 +31,16 @@ export type ExternalIdentity = {
   profileUrl?: string;
   username?: string;
   verified?: boolean;
+  confidence?: number;
+  proof?: "provider-api" | "rel-me" | "jsonld-same-as" | "profile-link" | "search-consensus" | "manual-review";
+  proofSourceUrl?: string;
+};
+
+export type ObservedName = {
+  name: string;
+  sourceUrl: string;
+  confidence: number;
+  proof: "provider-profile" | "jsonld-alternate-name" | "owned-page-author";
 };
 
 export type PersonObservation = {
@@ -37,10 +50,12 @@ export type PersonObservation = {
   biography?: string;
   location?: string;
   affiliations?: string[];
+  alternateNames?: ObservedName[];
   emailHash?: string;
   avatarUrl?: string;
   websiteUrl?: string;
   explicitCareerStage?: string;
+  contactRoutes?: CandidateContactRoute[];
   sourceUrl: string;
 };
 
@@ -126,7 +141,9 @@ export type ConnectorRunResult = {
 export type ConnectorEnrichmentContext = {
   now: Date;
   person: PersonObservation;
+  evidenceEvents?: DiscoveryEvent[];
   settings: ConnectorSettings;
+  researchPass?: number;
   signal?: AbortSignal;
 };
 

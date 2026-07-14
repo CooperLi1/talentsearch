@@ -5,40 +5,10 @@ import {
   isGateConfigured,
   verifyDashboardPassword,
 } from "@/lib/auth/gate";
+import { consumeRateLimit } from "@/lib/security/rate-limit";
 import { NextResponse } from "next/server";
 
-type AttemptWindow = { count: number; resetAt: number };
-
-const attempts = new Map<string, AttemptWindow>();
-const MAX_ATTEMPTS = 8;
-const WINDOW_MS = 10 * 60 * 1000;
 const MAX_LOGIN_BYTES = 4_096;
-
-function clientKey(request: Request) {
-  return (
-    request.headers.get("x-real-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown"
-  );
-}
-
-function isRateLimited(key: string) {
-  const now = Date.now();
-  const current = attempts.get(key);
-
-  if (!current || current.resetAt <= now) {
-    if (attempts.size > 5_000) {
-      for (const [attemptKey, window] of attempts) {
-        if (window.resetAt <= now) attempts.delete(attemptKey);
-      }
-    }
-    attempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
-    return false;
-  }
-
-  current.count += 1;
-  return current.count > MAX_ATTEMPTS;
-}
 
 function redirectToLogin(request: Request, reason: string) {
   return NextResponse.redirect(new URL(`/login?error=${reason}`, request.url), 303);
@@ -85,8 +55,12 @@ export async function POST(request: Request) {
     return redirectToLogin(request, "configuration");
   }
 
-  const key = clientKey(request);
-  if (isRateLimited(key)) {
+  const rateLimit = await consumeRateLimit(request, {
+    bucket: "auth:login",
+    limit: 8,
+    windowSeconds: 10 * 60,
+  });
+  if (!rateLimit.allowed) {
     return redirectToLogin(request, "rate-limit");
   }
 
@@ -109,7 +83,6 @@ export async function POST(request: Request) {
     return redirectToLogin(request, "invalid");
   }
 
-  attempts.delete(key);
   const response = NextResponse.redirect(new URL("/", request.url), 303);
   response.cookies.set(
     DASHBOARD_COOKIE,

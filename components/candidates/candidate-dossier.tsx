@@ -5,17 +5,16 @@ import {
   ArrowUpRight,
   CheckCircle2,
   ExternalLink,
-  Network,
 } from "lucide-react";
 import Link from "next/link";
 
 export type CandidateDossierView = {
   confidence: number;
-  connections: Array<{
-    name: string;
-    relationship: string;
-    source: string;
-    strength: number;
+  contactRoutes: Array<{
+    audience: "direct" | "public-profile" | "institutional";
+    label: string;
+    provenanceUrl: string;
+    url: string;
   }>;
   domains: string[];
   earlynessMarkdown: string;
@@ -126,6 +125,30 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
           />
 
           <div>
+            <p className="eyebrow">Contact routes</p>
+            {candidate.contactRoutes.length ? (
+              <ul className="evidence-list">
+                {candidate.contactRoutes.map((route) => (
+                  <li key={route.url}>
+                    <a
+                      href={route.url}
+                      rel="noreferrer"
+                      title={`Verified on ${route.provenanceUrl}`}
+                      target={route.url.startsWith("mailto:") ? undefined : "_blank"}
+                    >
+                      <span>{route.label}</span>
+                      <small>{route.audience.replace("-", " ")}</small>
+                      <ExternalLink aria-hidden="true" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="aside-empty">No verified public contact route yet.</p>
+            )}
+          </div>
+
+          <div>
             <p className="eyebrow">Public profiles</p>
             {candidate.identities.length ? (
               <ul className="evidence-list">
@@ -174,30 +197,10 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
               <MessageResponse className="prose">{candidate.whyNowMarkdown}</MessageResponse>
             </section>
             <section className="evidence-brief dossier-earlyness">
-              <p className="eyebrow">Why this is still early</p>
+              <p className="eyebrow">Current recognition</p>
               <MessageResponse className="prose">{candidate.earlynessMarkdown}</MessageResponse>
             </section>
           </div>
-
-          {candidate.connections.length ? (
-            <section className="dossier-connections" aria-labelledby="connection-heading">
-              <div>
-                <p className="eyebrow">Relevant graph paths</p>
-                <h2 id="connection-heading">How this person connects</h2>
-              </div>
-              <div className="connection-list">
-                {candidate.connections.map((connection) => (
-                  <article key={`${connection.name}-${connection.relationship}`}>
-                    <Network aria-hidden="true" />
-                    <div>
-                      <strong>{connection.name}</strong>
-                      <span>{connection.relationship} · {connection.source}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : null}
 
           <section className="timeline" aria-labelledby="timeline-heading">
             <div className="timeline-heading-row">

@@ -39,6 +39,27 @@ npm run dev
 
 `supabase db reset` is destructive to the local database and then replays committed migrations and seed data. It does not target the linked remote project.
 
+### Operational checks
+
+After `.env.local` is configured, use the repository checks instead of testing credentials through the UI:
+
+```bash
+npm run check:connections
+npm run setup:operator
+```
+
+`check:connections` performs read-only, low-cost checks and never prints credential values. Brave is reported as configured without spending a search request. `setup:operator` idempotently adds or reactivates the address in `INITIAL_DIGEST_SUBSCRIBER_EMAIL`; run it only after migrations have created the workspace and subscriber table.
+
+The OpenAlex check uses its read-only `/rate-limit` endpoint. Create a free key at [OpenAlex API settings](https://openalex.org/settings/api), store it as `OPENALEX_API_KEY`, and restart or redeploy before enabling the OpenAlex source in the dashboard. `OPENALEX_EMAIL` is legacy attribution and is not a substitute for the key.
+
+With the development server running on port 3001, verify the private control path:
+
+```bash
+OPERATIONAL_TEST_URL=http://localhost:3001 npm run test:operational
+```
+
+That check covers unauthenticated rejection, login/session creation, cross-origin mutation rejection, a source mutation, and dashboard rendering. A `503` source-mutation result means the app correctly detected that the Supabase schema is not installed; it is not a ready production result.
+
 ## Environment variables
 
 Use [`.env.example`](../.env.example) as the inventory. Store production values in Vercel project settings or an approved secret manager, not in Git.
@@ -104,7 +125,7 @@ The current gate is a deliberately small internal-workspace password flow:
 
 Generate separate high-entropy values for `SESSION_SECRET` and `CRON_SECRET`, rotate them through the deployment environment, and expect existing sessions to be invalidated when the session secret changes.
 
-The login attempt limiter is process-local, so it is not a complete distributed brute-force control on serverless infrastructure. Protect the deployment with Vercel Firewall/rate limiting or replace the shared gate with managed identity before broadening access beyond a small trusted team.
+Login attempts and dashboard API routes use a shared Supabase fixed-window limiter, so limits remain effective across Vercel instances. Client addresses are HMACed before storage. `RATE_LIMIT_HASH_SECRET` may provide a dedicated key; otherwise `SESSION_SECRET` is used. Vercel Firewall remains useful defense in depth, and managed identity is still preferable before broadening access beyond a small trusted team.
 
 ### Weekly-digest recipients
 
@@ -141,7 +162,7 @@ The exact candidate email payload is stored on the digest items and reloaded bef
 
 The durable digest key and atomic database claim guard concurrent cron runs. Failed or stale-sending attempts can be reclaimed automatically for at most 23 hours; older attempts fail closed and require provider reconciliation. These controls do not make a changing recipient payload retry-safe; that requires the protected recipient snapshot described above.
 
-If `EMAIL_DELIVERY_MODE` is not `send`, or the API key is missing, the function returns `preview` without network activity. In explicit send mode, a missing sender or dashboard URL is an error instead of silently sending broken links.
+If `EMAIL_DELIVERY_MODE` is not `send`, the function returns `preview` without network activity. In explicit send mode, a missing or malformed API key, missing sender, or invalid dashboard URL fails closed instead of silently treating the run as a preview.
 
 Register Resend webhooks for delivered, bounced, complained, and suppressed events before sending beyond a test cohort. Verify webhook signatures in the receiving route, store only necessary event fields, and deactivate bounced/complaining recipients.
 
@@ -152,9 +173,11 @@ Cron definitions live in `vercel.json` and must target real Route Handlers. Sche
 | Route | Schedule | Purpose |
 | --- | --- | --- |
 | `GET /api/cron/discovery` | `30 12 * * *` | Daily discovery at 12:30 UTC |
-| `GET /api/cron/weekly-digest` | `0 15 * * 1` | Monday digest at 15:00 UTC |
+| `GET /api/cron/enrichment` | `7,17,27,37,47,57 * * * *` | Claim rotating deep-research passes and follow provider, site, and public-search leads |
+| `GET /api/cron/briefs` | `12,42 * * * *` | Drain up to 30 grounded candidate briefs twice per hour |
+| `GET /api/cron/weekly-digest` | `*/15 * * * *` | Preparation and delivery dispatcher |
 
-The weekly route creates or reuses the persisted Monday-window digest and its ranked candidate snapshot, then re-resolves active `digest_subscribers` for the claimed delivery attempt before calling `sendWeeklyDigest` from `lib/email/send-weekly-digest`.
+The digest route runs every 15 minutes and checks the active criterion. Operators choose one or more weekdays, a UTC send time in 15-minute increments, preparation lead time, and candidate count. The preparation phase freezes the ranked candidate payload under the future send window's durable digest key. At send time the same route reloads that frozen snapshot, re-resolves active `digest_subscribers`, claims delivery, and calls `sendWeeklyDigest` from `lib/email/send-weekly-digest`. If preparation was missed, the send phase can create the same snapshot immediately without changing the idempotency key. This schedule requires a Vercel plan that permits sub-daily cron frequency; otherwise use an external scheduler with the same route and authorization header.
 
 Every cron route must require:
 
@@ -171,6 +194,10 @@ Vercel cron delivery is best-effort: an invocation can be missed or delivered mo
 
 Do not rely on in-memory locks; serverless instances do not share state. Keep work below the function duration limit. For large source sets, have the cron create bounded work items and process them in resumable chunks.
 
+The dedicated brief worker claims candidates atomically with a five-minute lease. Discovery and enrichment update deterministic scores but do not generate narratives; the separate twice-hourly brief cron drains that model-backed workload so source research cannot overrun its function window. A candidate is eligible after identity resolution and one substantive event at 65% confidence or higher, so the worker can prepare records before cross-source enrichment completes. Queue and digest selection remain stricter: both require a completed brief and two evidence publishers in the displayed bullets. The worker records a versioned evidence fingerprint after a successful `gpt-4o-mini` brief, so unchanged candidates are not regenerated. New material evidence or a prompt-policy version changes the fingerprint and returns the candidate to the backlog. Generation, plain-language rewriting, and factual verification run at temperature zero. Unsupported facts fail closed, with one bounded repair attempt; no deterministic connector copy is substituted. Failed generations receive a six-hour retry-after time so repeated hard cases cannot consume every batch. Set `CANDIDATE_BRIEF_BATCH_LIMIT` conservatively enough to stay within the function duration.
+
+`DISCOVERY_ENRICHMENT_LIMIT` is a per-invocation cap, not a backlog size; production defaults to three candidates. The enrichment cron runs six times an hour, which raises throughput while keeping each network-heavy invocation below the five-minute ceiling. Candidate rows are claimed with `FOR UPDATE SKIP LOCKED`, which prevents overlapping cron invocations from researching the same person. Each candidate receives three rotating research passes, spaced at least four hours apart, before entering maintenance cadence. New events, identity hypotheses, aliases, affiliations, or websites advance a durable research revision and immediately return the candidate to the priority queue after the active pass finishes. Useful later runs return after seven days; empty later runs back off for 30 days. A failed worker claim expires automatically so the candidate returns to the backlog.
+
 ### Local cron check
 
 Scheduled delivery is not simulated by `next dev`; call the Route Handler directly:
@@ -179,6 +206,10 @@ Scheduled delivery is not simulated by `next dev`; call the Route Handler direct
 curl -i \
   -H "Authorization: Bearer YOUR_LOCAL_CRON_SECRET" \
   http://localhost:3000/api/cron/discovery
+
+curl -i \
+  -H "Authorization: Bearer YOUR_LOCAL_CRON_SECRET" \
+  http://localhost:3000/api/cron/briefs
 
 curl -i \
   -H "Authorization: Bearer YOUR_LOCAL_CRON_SECRET" \

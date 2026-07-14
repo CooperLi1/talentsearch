@@ -51,6 +51,18 @@ export interface CandidateRow extends Record<string, unknown> {
   embedding: string | null;
   embedding_model: string | null;
   embedding_updated_at: string | null;
+  brief_evidence_fingerprint: string | null;
+  brief_generated_at: string | null;
+  brief_model: string | null;
+  brief_prompt_version: string | null;
+  brief_claimed_until: string | null;
+  enrichment_attempted_at: string | null;
+  enrichment_next_at: string | null;
+  enrichment_result_count: number;
+  enrichment_attempt_count: number;
+  enrichment_claimed_until: string | null;
+  research_input_revision: number;
+  research_completed_revision: number;
   first_seen_at: string;
   last_seen_at: string;
   created_at: string;
@@ -82,6 +94,18 @@ export interface CandidateInsert extends Record<string, unknown> {
   embedding?: string | number[] | null;
   embedding_model?: string | null;
   embedding_updated_at?: string | null;
+  brief_evidence_fingerprint?: string | null;
+  brief_generated_at?: string | null;
+  brief_model?: string | null;
+  brief_prompt_version?: string | null;
+  brief_claimed_until?: string | null;
+  enrichment_attempted_at?: string | null;
+  enrichment_next_at?: string | null;
+  enrichment_result_count?: number;
+  enrichment_attempt_count?: number;
+  enrichment_claimed_until?: string | null;
+  research_input_revision?: number;
+  research_completed_revision?: number;
   first_seen_at?: string;
   last_seen_at?: string;
 }
@@ -309,6 +333,48 @@ export type Database = {
           p_domains?: string[] | null;
         };
         Returns: Array<Record<string, Json | string[]>>;
+      };
+      consume_api_rate_limit: {
+        Args: {
+          p_bucket: string;
+          p_key_hash: string;
+          p_limit: number;
+          p_window_seconds: number;
+        };
+        Returns: Json;
+      };
+      claim_candidate_brief_batch: {
+        Args: {
+          p_workspace_id: number;
+          p_match_count?: number;
+          p_claim_seconds?: number;
+        };
+        Returns: Array<{
+          candidate_id: number;
+          evidence_fingerprint: string;
+        }>;
+      };
+      claim_candidate_enrichment_batch: {
+        Args: {
+          p_workspace_id: number;
+          p_match_count?: number;
+          p_claim_seconds?: number;
+        };
+        Returns: Array<{
+          candidate_id: number;
+          research_pass: number;
+          research_revision: number;
+        }>;
+      };
+      complete_candidate_enrichment_attempt: {
+        Args: {
+          p_workspace_id: number;
+          p_candidate_id: number;
+          p_event_count: number;
+          p_attempted_at: string;
+          p_research_revision: number;
+        };
+        Returns: undefined;
       };
       candidate_graph_neighbors: {
         Args: {

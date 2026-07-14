@@ -10,6 +10,13 @@ import {
   updateSubscriberDeliveries,
 } from "@/lib/data/talent-radar";
 import type { DigestRecord } from "@/lib/data/contracts";
+import {
+  buildOperatorBrief,
+  hasGroundedOperatorBrief,
+  hasIndependentEvidenceCoverage,
+  hasIndependentOperatorBriefCoverage,
+} from "@/lib/candidates/operator-brief";
+import { digestScheduleWindow } from "@/lib/digest/schedule";
 import { sendWeeklyDigest } from "@/lib/email/send-weekly-digest";
 import type { DigestCandidate } from "@/lib/email/types";
 import type { Json } from "@/lib/supabase/database.types";
@@ -19,28 +26,9 @@ import { apiErrorResponse, assertCronRequest, getWorkspaceId } from "../../_lib/
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const WEEK_MILLISECONDS = 7 * 24 * 60 * 60 * 1_000;
 const DIGEST_CLAIM_STALE_MINUTES = 15;
 const DIGEST_RETRY_WINDOW_MINUTES = 23 * 60;
 const DIGEST_RETRY_WINDOW_MILLISECONDS = DIGEST_RETRY_WINDOW_MINUTES * 60 * 1_000;
-
-function weeklyDigestWindow(now: Date) {
-  const daysSinceMonday = (now.getUTCDay() + 6) % 7;
-  let anchorMilliseconds = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() - daysSinceMonday,
-    15,
-  );
-  if (anchorMilliseconds > now.getTime()) anchorMilliseconds -= WEEK_MILLISECONDS;
-
-  const periodEnd = new Date(anchorMilliseconds).toISOString();
-  return {
-    dedupeKey: `weekly:${periodEnd}`,
-    periodStart: new Date(anchorMilliseconds - WEEK_MILLISECONDS).toISOString(),
-    periodEnd,
-  };
-}
 
 function skipReason(digest: DigestRecord) {
   if (digest.status === "sent") return "already-sent";
@@ -61,7 +49,7 @@ function isJsonRecord(value: Json): value is { [key: string]: Json | undefined }
 
 function parseDigestCandidateSnapshot(value: Json): DigestCandidate {
   if (!isJsonRecord(value)) throw new Error("Digest candidate snapshot is invalid");
-  const requiredStrings = ["id", "name", "headline", "summary", "whyNow", "earlyness"] as const;
+  const requiredStrings = ["id", "name", "headline", "summary"] as const;
   if (requiredStrings.some((key) => typeof value[key] !== "string")) {
     throw new Error("Digest candidate snapshot is incomplete");
   }
@@ -73,7 +61,27 @@ function parseDigestCandidateSnapshot(value: Json): DigestCandidate {
   ))) {
     throw new Error("Digest candidate snapshot sources are invalid");
   }
-  return value as unknown as DigestCandidate;
+  const candidate = value as unknown as Omit<DigestCandidate, "facts"> & { facts?: DigestCandidate["facts"] };
+  const facts = Array.isArray(value.facts)
+    ? value.facts.flatMap((fact) => {
+        if (!isJsonRecord(fact) || typeof fact.text !== "string" || !Array.isArray(fact.sources)) return [];
+        const sources = fact.sources.flatMap((source) =>
+          isJsonRecord(source) && typeof source.label === "string" && typeof source.url === "string"
+            ? [{ label: source.label, url: source.url }]
+            : [],
+        );
+        return [{ text: fact.text, sources }];
+      })
+    : [];
+  return {
+    ...candidate,
+    facts: facts.length
+      ? facts
+      : [candidate.headline, candidate.summary]
+          .filter((text, index, values) => text.trim() && values.indexOf(text) === index)
+          .slice(0, 5)
+          .map((text) => ({ text, sources: [] })),
+  };
 }
 
 function dossierUrl(slug: string) {
@@ -93,34 +101,50 @@ export async function GET(request: Request) {
   try {
     assertCronRequest(request);
     const workspaceId = getWorkspaceId();
-    const { dedupeKey, periodStart, periodEnd } = weeklyDigestWindow(new Date());
     const criterion = await getActiveCriterionProfile(workspaceId);
-    const [ranked, subscribers] = await Promise.all([
-      rankCandidatesForDigest(workspaceId, {
-        minimumScore: criterion?.minimumScore ?? 55,
-        limit: criterion?.weeklyCandidateCount ?? 12,
-      }),
-      listDigestSubscribers(workspaceId),
-    ]);
+    const schedule = digestScheduleWindow(
+      new Date(),
+      criterion?.digestDaysOfWeek ?? [1],
+      criterion?.digestDeliveryHourUtc ?? 15,
+      criterion?.digestDeliveryMinuteUtc ?? 0,
+      criterion?.digestPreparationLeadHours ?? 3,
+    );
+    if (!schedule.due || schedule.phase === "idle") {
+      return Response.json({ ok: true, skipped: true, reason: "not-scheduled" });
+    }
+    const { dedupeKey, periodStart, periodEnd } = schedule;
+    const requestedCandidateCount = criterion?.weeklyCandidateCount ?? 12;
+    const ranked = await rankCandidatesForDigest(workspaceId, {
+      minimumScore: criterion?.minimumScore ?? 25,
+      // Hydration applies the independent-publisher gate, so inspect the full
+      // bounded ranking instead of assuming the first few rows will qualify.
+      limit: 100,
+    });
     const candidates = (await Promise.all(ranked.map((item) => getCandidateBySlug(item.slug, workspaceId))))
-      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
-    const emailCandidates: DigestCandidate[] = candidates.map((candidate) => ({
-      id: candidate.id,
-      name: candidate.name,
-      headline: candidate.headline,
-      summary: candidate.summaryMarkdown,
-      whyNow: candidate.whyNowMarkdown,
-      earlyness: candidate.earlynessMarkdown,
-      confidence: candidate.confidenceBand,
-      score: candidate.score,
-      location: candidate.location || undefined,
-      profileUrl: dossierUrl(candidate.slug),
-      sources: (candidate.latestEvent?.links ?? []).map((link) => ({ label: link.label, url: link.url })),
-      newEvent: candidate.latestEvent
-        ? { title: candidate.latestEvent.title, summary: candidate.latestEvent.summaryMarkdown, occurredAt: candidate.latestEvent.occurredAt ?? undefined }
-        : undefined,
-    }));
-    const subject = `Unfound: ${emailCandidates.length} new signals`;
+      .filter((candidate): candidate is NonNullable<typeof candidate> =>
+        Boolean(candidate) && hasGroundedOperatorBrief(candidate as NonNullable<typeof candidate>),
+      )
+      .filter((candidate) => hasIndependentEvidenceCoverage(candidate))
+      .filter((candidate) => hasIndependentOperatorBriefCoverage(candidate))
+      .slice(0, requestedCandidateCount);
+    const emailCandidates: DigestCandidate[] = candidates.map((candidate) => {
+      const facts = buildOperatorBrief(candidate);
+      return {
+        id: candidate.id,
+        name: candidate.name,
+        headline: candidate.headline,
+        summary: candidate.summaryMarkdown,
+        facts,
+        confidence: candidate.confidenceBand,
+        score: candidate.score,
+        location: candidate.location || undefined,
+        profileUrl: dossierUrl(candidate.slug),
+        sources: facts
+          .flatMap((fact) => fact.sources)
+          .filter((source, index, sources) => sources.findIndex((item) => item.url === source.url) === index),
+      };
+    });
+    const subject = `Unfound: ${emailCandidates.length} candidates to review`;
     const { digest } = await createDigest({
       workspaceId,
       dedupeKey,
@@ -135,7 +159,7 @@ export async function GET(request: Request) {
         score: emailCandidate.score ?? 0,
         headline: emailCandidate.headline,
         summaryMarkdown: emailCandidate.summary,
-        whyNowMarkdown: emailCandidate.whyNow,
+        whyNowMarkdown: "",
         evidenceLinks: candidates[index]?.latestEvent?.links ?? [],
         payloadSnapshot: JSON.parse(JSON.stringify(emailCandidate)) as Json,
       })),
@@ -143,6 +167,14 @@ export async function GET(request: Request) {
     const candidateSnapshots = await listDigestCandidateSnapshots(digest.id, workspaceId);
     if (candidateSnapshots.length !== digest.candidateCount) {
       throw new Error("Digest candidate snapshot is incomplete");
+    }
+    if (schedule.phase === "prepare") {
+      return Response.json({
+        ok: true,
+        prepared: true,
+        digestId: digest.id,
+        scheduledFor: periodEnd,
+      });
     }
     const deliveryCandidates = candidateSnapshots.map(parseDigestCandidateSnapshot);
     const claim = await claimDigestDelivery(
@@ -163,6 +195,7 @@ export async function GET(request: Request) {
     }
     claimedDigest = claim.digest;
 
+    const subscribers = await listDigestSubscribers(workspaceId);
     const activeSubscribers = subscribers.filter((subscriber) => subscriber.status === "active");
     const delivery = await sendWeeklyDigest({
       digestId: claimedDigest.id,

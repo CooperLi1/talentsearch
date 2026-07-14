@@ -7,7 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "check:connections": "node --env-file=.env.local --import tsx scripts/check-connections.ts",
+    "test:operational": "node --env-file=.env.local --import tsx scripts/verify-local-api.ts",
+    "setup:operator": "node --env-file=.env.local --import tsx scripts/bootstrap-operator.ts",
+    "review:backlog": "node --env-file=.env.local --import tsx scripts/review-backlog.ts",
+    "audit:github-forks": "node --env-file=.env.local --import tsx scripts/prune-github-forks.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "3.0.83",

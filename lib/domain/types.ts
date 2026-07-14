@@ -31,6 +31,7 @@ export interface TalentEvent {
   type: string;
   title: string;
   summaryMarkdown: string;
+  evidenceExcerpt?: string;
   whyItMattersMarkdown: string;
   occurredAt: ISODateString | null;
   discoveredAt: ISODateString;
@@ -40,11 +41,15 @@ export interface TalentEvent {
   novelty: number;
   significance: number;
   links: EvidenceLink[];
+  metrics?: Record<string, number>;
+  tags?: string[];
+  raw?: Record<string, unknown>;
 }
 
 export interface CandidateIdentity {
   id: string;
   provider: string;
+  providerSubjectId: string;
   handle?: string;
   profileUrl?: string;
   displayName: string;
@@ -52,6 +57,25 @@ export interface CandidateIdentity {
   confidence: number;
   distinguishingFacts?: string[];
   ambiguityKey?: string;
+}
+
+export interface CandidateContactRoute {
+  kind:
+    | "email"
+    | "contact-page"
+    | "github"
+    | "gitlab"
+    | "hacker-news"
+    | "x"
+    | "linkedin"
+    | "website"
+    | "institutional";
+  label: string;
+  url: string;
+  provenanceUrl: string;
+  confidence: number;
+  verified: boolean;
+  audience: "direct" | "public-profile" | "institutional";
 }
 
 export interface CandidateConnection {
@@ -73,9 +97,11 @@ export interface Candidate {
   avatarUrl?: string;
   websiteUrl?: string;
   headline: string;
+  biography?: string;
   location: string;
   stage: string;
   school?: string;
+  affiliations?: string[];
   domains: string[];
   score: number;
   momentum: number;
@@ -83,11 +109,19 @@ export interface Candidate {
   confidenceBand: ConfidenceBand;
   status: CandidateStatus;
   summaryMarkdown: string;
+  briefPolicyVersion?: string | null;
   whyNowMarkdown: string;
   earlynessMarkdown: string;
   latestEvent: TalentEvent | null;
   events: TalentEvent[];
   identities: CandidateIdentity[];
+  alternateNames?: Array<{
+    name: string;
+    sourceUrl: string;
+    confidence: number;
+    proof: string;
+  }>;
+  contactRoutes: CandidateContactRoute[];
   connections: CandidateConnection[];
   sourceCount: number;
   firstSeenAt: ISODateString;
@@ -129,6 +163,62 @@ export interface TalentGraph {
 
 export type SourceStatus = "active" | "paused" | "degraded" | "disabled";
 
+export type StructuredSourceEventType =
+  | "competition_result"
+  | "hackathon_result"
+  | "fellowship_or_grant"
+  | "community_recognition";
+
+export interface EditableStructuredSourcePage {
+  url: string;
+  itemSelector: string;
+  nameSelector: string;
+  titleSelector?: string;
+  descriptionSelector?: string;
+  linkSelector?: string;
+  dateSelector?: string;
+  rankSelector?: string;
+  affiliationSelector?: string;
+  eventName?: string;
+  occurredAt?: string;
+  eventType?: StructuredSourceEventType;
+}
+
+export interface EditableManualProfile {
+  name: string;
+  profileUrl: string;
+  headline?: string;
+  biography?: string;
+  location?: string;
+  affiliations?: string[];
+  websiteUrl?: string;
+  observedAt?: string;
+  note?: string;
+  provenanceUrl?: string;
+  reviewed: boolean;
+}
+
+export interface EditableSourceOptions {
+  complexityKeywords?: string[];
+  maxContests?: number;
+  feed?: "newstories" | "beststories" | "topstories" | "showstories";
+  minimumScore?: number;
+  topicKeywords?: string[];
+  requireTopicMatch?: boolean;
+  maxQueries?: number;
+  maxResults?: number;
+  pages?: EditableStructuredSourcePage[];
+  profiles?: EditableManualProfile[];
+}
+
+export interface EditableSourceConfiguration {
+  queries?: string[];
+  urls?: string[];
+  lookbackDays?: number;
+  maxItems?: number;
+  options?: EditableSourceOptions;
+}
+
 export interface DiscoverySource {
   id: string;
   key: string;
@@ -141,6 +231,7 @@ export interface DiscoverySource {
   lastSuccessAt: ISODateString | null;
   nextRunAt: ISODateString | null;
   discoveredThisWeek: number;
+  config: EditableSourceConfiguration;
   icon?: string;
 }
 
@@ -151,6 +242,8 @@ export interface CriterionSignal {
   weight: number;
   enabled: boolean;
 }
+
+export type DigestCadence = "daily" | "twice_weekly" | "weekly" | "biweekly";
 
 export interface CriterionProfile {
   id: string;
@@ -163,6 +256,11 @@ export interface CriterionProfile {
   minimumScore: number;
   minimumConfidence: number;
   weeklyCandidateCount: number;
+  digestCadence: DigestCadence;
+  digestDaysOfWeek: number[];
+  digestDeliveryHourUtc: number;
+  digestDeliveryMinuteUtc: number;
+  digestPreparationLeadHours: number;
   explorationRate: number;
   learningRate: number;
   lastLearnedAt: ISODateString | null;
@@ -229,6 +327,10 @@ export interface CandidateSearchOptions {
   minimumScore?: number;
   statuses?: CandidateStatus[];
   domains?: string[];
+  careerStages?: string[];
+  eventTypes?: string[];
+  locations?: string[];
+  sources?: string[];
   embedding?: number[];
   semanticWeight?: number;
 }

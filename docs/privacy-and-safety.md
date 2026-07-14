@@ -45,6 +45,8 @@ Collect an item only when all are true:
 
 Do not import private contact books, leaked datasets, brokered sensitive data, private messages, or non-public profiles. Do not scrape LinkedIn without explicit authorization. X graph access must use permitted official APIs and configured read-only scopes.
 
+LinkedIn search results and public links are identity locators, not biographical evidence. Store only the normalized member URL and provenance/query hash needed for review; discard search snippets. An operator must confirm that the URL belongs to the candidate before manual ingestion. Separately approved API data is accepted only when the response includes a durable member subject and exactly matches the requested normalized profile URL. The application does not open LinkedIn pages or automate an authenticated LinkedIn session.
+
 ## Facts, identity, and model interpretation
 
 Keep three layers separate:

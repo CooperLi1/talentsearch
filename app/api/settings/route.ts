@@ -2,6 +2,7 @@ import {
   createCriterionProfileVersion,
   getActiveCriterionProfile,
 } from "@/lib/data/talent-radar";
+import { normalizeCriterionSignals } from "@/lib/criteria/signals";
 
 import { getWorkspaceId, readJson, withDashboard } from "../_lib/http";
 import { settingsUpdateSchema } from "../_lib/schemas";
@@ -40,7 +41,7 @@ async function mutate(request: Request) {
             changeSummary: "Updated dashboard tuning controls.",
             activate: true,
           }
-        : { ...input, origin: "human", changeSummary: "Updated discovery criterion.", activate: true },
+        : { ...input, signals: "signals" in input ? normalizeCriterionSignals(input.signals) : current?.signals, origin: "human", changeSummary: "Updated discovery criterion.", activate: true },
     );
     return Response.json({ criterion });
   });
