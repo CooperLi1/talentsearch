@@ -147,3 +147,7 @@ An enrichment pass can discover a new alias, profile, website, or event while it
 ## Research revisions should coalesce, not count every evidence row
 
 An enrichment pass can insert several events for one person. If each event increments a durable research revision and the worker sorts by the raw revision gap, a productive profile can reclaim every bounded batch while untouched candidates never receive a first pass. Coalesce changes observed during one pass into a single pending follow-up, complete the observed revision atomically, and put first-pass rotation ahead of revision urgency. Verify actual progress from the run ledger; a cron expression in source control is not evidence that a production scheduler is invoking it.
+
+## Cron frequency limits apply per schedule, not per route
+
+When a hosting plan permits many cron jobs but each expression can run only daily, one oversized invocation is the wrong workaround: it still inherits the function timeout. If the platform explicitly supports repeated routes, distribute bounded, lease-backed invocations across distinct once-daily expressions. Assume plan-level timing jitter can make shards overlap, preserve `SKIP LOCKED` claims and idempotent completion, and give time-sensitive dispatchers a bounded catch-up window tied to the original scheduled timestamp.

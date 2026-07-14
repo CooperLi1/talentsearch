@@ -17,9 +17,19 @@ function normalizedTime(hour: number, minute: number) {
   };
 }
 
-function inDispatchBucket(date: Date, hour: number, minute: number) {
-  return date.getUTCHours() === hour &&
-    Math.floor(date.getUTCMinutes() / DISPATCH_INTERVAL_MINUTES) * DISPATCH_INTERVAL_MINUTES === minute;
+function scheduledSendOnDay(now: Date, dayOffset: number, hour: number, minute: number) {
+  return new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + dayOffset,
+    hour,
+    minute,
+  ));
+}
+
+function isInsideDispatchWindow(now: Date, windowStart: Date, dispatchWindowMinutes: number) {
+  const elapsed = now.getTime() - windowStart.getTime();
+  return elapsed >= 0 && elapsed < dispatchWindowMinutes * 60 * 1_000;
 }
 
 function scheduledSendForPhase(
@@ -28,35 +38,29 @@ function scheduledSendForPhase(
   hour: number,
   minute: number,
   leadHours: number,
+  dispatchWindowMinutes: number,
 ) {
-  if (days.includes(now.getUTCDay()) && inDispatchBucket(now, hour, minute)) {
-    return {
-      phase: "send" as const,
-      scheduledFor: new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        hour,
-        minute,
-      )),
-    };
+  for (const dayOffset of [0, -1]) {
+    const scheduledFor = scheduledSendOnDay(now, dayOffset, hour, minute);
+    if (
+      days.includes(scheduledFor.getUTCDay()) &&
+      isInsideDispatchWindow(now, scheduledFor, dispatchWindowMinutes)
+    ) {
+      return { phase: "send" as const, scheduledFor };
+    }
   }
 
-  const preparationTarget = new Date(now.getTime() + leadHours * 60 * 60 * 1_000);
-  if (
-    days.includes(preparationTarget.getUTCDay()) &&
-    inDispatchBucket(preparationTarget, hour, minute)
-  ) {
-    return {
-      phase: "prepare" as const,
-      scheduledFor: new Date(Date.UTC(
-        preparationTarget.getUTCFullYear(),
-        preparationTarget.getUTCMonth(),
-        preparationTarget.getUTCDate(),
-        hour,
-        minute,
-      )),
-    };
+  for (const dayOffset of [0, 1]) {
+    const scheduledFor = scheduledSendOnDay(now, dayOffset, hour, minute);
+    const preparationStartsAt = new Date(
+      scheduledFor.getTime() - leadHours * 60 * 60 * 1_000,
+    );
+    if (
+      days.includes(scheduledFor.getUTCDay()) &&
+      isInsideDispatchWindow(now, preparationStartsAt, dispatchWindowMinutes)
+    ) {
+      return { phase: "prepare" as const, scheduledFor };
+    }
   }
 
   return { phase: "idle" as const, scheduledFor: null };
@@ -84,11 +88,16 @@ export function digestScheduleWindow(
   deliveryHourUtc = 15,
   deliveryMinuteUtc = 0,
   preparationLeadHours = 3,
+  dispatchWindowMinutes = DISPATCH_INTERVAL_MINUTES,
 ) {
   const days = normalizeDays(daysOfWeek);
   const { hour, minute } = normalizedTime(deliveryHourUtc, deliveryMinuteUtc);
   const leadHours = Math.min(12, Math.max(1, Math.trunc(preparationLeadHours)));
-  const dispatch = scheduledSendForPhase(now, days, hour, minute, leadHours);
+  const windowMinutes = Math.min(180, Math.max(
+    DISPATCH_INTERVAL_MINUTES,
+    Math.trunc(dispatchWindowMinutes),
+  ));
+  const dispatch = scheduledSendForPhase(now, days, hour, minute, leadHours, windowMinutes);
 
   if (!dispatch.scheduledFor) {
     return {

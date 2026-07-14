@@ -29,6 +29,7 @@ export const maxDuration = 300;
 const DIGEST_CLAIM_STALE_MINUTES = 15;
 const DIGEST_RETRY_WINDOW_MINUTES = 23 * 60;
 const DIGEST_RETRY_WINDOW_MILLISECONDS = DIGEST_RETRY_WINDOW_MINUTES * 60 * 1_000;
+const VERCEL_HOBBY_DISPATCH_WINDOW_MINUTES = 120;
 
 function skipReason(digest: DigestRecord) {
   if (digest.status === "sent") return "already-sent";
@@ -108,6 +109,9 @@ export async function GET(request: Request) {
       criterion?.digestDeliveryHourUtc ?? 15,
       criterion?.digestDeliveryMinuteUtc ?? 0,
       criterion?.digestPreparationLeadHours ?? 3,
+      request.headers.get("x-vercel-cron-schedule")
+        ? VERCEL_HOBBY_DISPATCH_WINDOW_MINUTES
+        : undefined,
     );
     if (!schedule.due || schedule.phase === "idle") {
       return Response.json({ ok: true, skipped: true, reason: "not-scheduled" });

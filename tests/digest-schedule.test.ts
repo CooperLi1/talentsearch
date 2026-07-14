@@ -37,3 +37,39 @@ test("invalid or duplicate day settings normalize safely", () => {
   assert.equal(window.deliveryMinuteUtc, 0);
   assert.equal(window.preparationLeadHours, 1);
 });
+
+test("hourly Hobby dispatchers catch up after Vercel timing jitter", () => {
+  const delayedSend = digestScheduleWindow(
+    new Date("2026-07-13T16:42:00Z"),
+    [1],
+    15,
+    30,
+    3,
+    120,
+  );
+  const delayedPreparation = digestScheduleWindow(
+    new Date("2026-07-13T13:41:00Z"),
+    [1],
+    15,
+    30,
+    3,
+    120,
+  );
+  assert.equal(delayedSend.phase, "send");
+  assert.equal(delayedSend.periodEnd, "2026-07-13T15:30:00.000Z");
+  assert.equal(delayedPreparation.phase, "prepare");
+  assert.equal(delayedPreparation.periodEnd, "2026-07-13T15:30:00.000Z");
+});
+
+test("a delayed dispatcher can deliver the prior day's late send", () => {
+  const window = digestScheduleWindow(
+    new Date("2026-07-14T00:47:00Z"),
+    [1],
+    23,
+    45,
+    3,
+    120,
+  );
+  assert.equal(window.phase, "send");
+  assert.equal(window.periodEnd, "2026-07-13T23:45:00.000Z");
+});
