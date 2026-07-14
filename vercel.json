@@ -7,11 +7,11 @@
     },
     {
       "path": "/api/cron/enrichment",
-      "schedule": "7,17,27,37,47,57 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/briefs",
-      "schedule": "12,42 * * * *"
+      "schedule": "2,12,22,32,42,52 * * * *"
     },
     {
       "path": "/api/cron/weekly-digest",

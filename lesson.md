@@ -143,3 +143,7 @@ Repeating one broad search more often mostly returns cached duplicates, while ra
 ## Finish research against the revision you claimed
 
 An enrichment pass can discover a new alias, profile, website, or event while it is running. If completion simply marks the candidate current, that newly created lead can be stranded until maintenance cadence. Claim a durable input revision, complete only through that revision, and immediately requeue when the stored input revision advanced during the pass. This turns every new identity lead into bounded follow-up work without creating an unbounded synchronous crawl.
+
+## Research revisions should coalesce, not count every evidence row
+
+An enrichment pass can insert several events for one person. If each event increments a durable research revision and the worker sorts by the raw revision gap, a productive profile can reclaim every bounded batch while untouched candidates never receive a first pass. Coalesce changes observed during one pass into a single pending follow-up, complete the observed revision atomically, and put first-pass rotation ahead of revision urgency. Verify actual progress from the run ledger; a cron expression in source control is not evidence that a production scheduler is invoking it.
