@@ -28,6 +28,7 @@ import {
 import { getAdminSupabaseClient, hasSupabaseAdminEnv } from "@/lib/supabase/admin";
 import { assertPublicHttpUrl, isBlockedIp, sanitizePlainText } from "@/lib/discovery/security";
 import { isLinkedInDirectAccessApproved } from "@/lib/discovery/linkedin-policy";
+import { nullableSearchFilter } from "@/lib/search/filters";
 import type { CandidateRow, CriterionProfileRow, DigestItemRow, DigestRow, DigestSubscriberRow, EventRow, Json, SourceRow } from "@/lib/supabase/database.types";
 
 import type {
@@ -654,7 +655,7 @@ export async function searchCandidates(
     p_query_embedding: options.embedding ?? null,
     p_match_count: hasPostFilters ? 100 : limit,
     p_semantic_weight: options.embedding ? (options.semanticWeight ?? 0.65) : 0,
-    p_domains: options.domains ?? null,
+    p_domains: nullableSearchFilter(options.domains),
   });
   fail(error);
   const ranked = (data ?? []) as Array<Record<string, unknown>>;

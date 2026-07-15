@@ -1,4 +1,5 @@
 import { embedQuery } from "@/lib/ai/embeddings";
+import { toPeopleCandidateView } from "@/lib/candidates/people-view";
 import { searchCandidates } from "@/lib/data/talent-radar";
 import { parseTalentQuery } from "@/lib/search/query";
 
@@ -49,6 +50,7 @@ export async function POST(request: Request) {
         .join("\n\n");
       return {
         candidate,
+        view: toPeopleCandidateView(candidate),
         similarity: Number.isFinite(semanticSimilarity) ? semanticSimilarity : 0,
         rationale: rationale || undefined,
       };
