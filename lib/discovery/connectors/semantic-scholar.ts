@@ -1,4 +1,6 @@
 import { fetchJson } from "../http";
+import { doiAuthorshipIdentity } from "../doi";
+import { normalizeOrcid, orcidProfileUrl } from "../orcid";
 import { sanitizePlainText } from "../security";
 import type {
   ConnectorEnrichmentContext,
@@ -11,7 +13,18 @@ import type {
 } from "../types";
 import { asNumber, createDiscoveryEvent } from "./shared";
 
-type SemanticAuthor = { authorId?: string; name?: string };
+type SemanticAuthor = {
+  authorId?: string;
+  name?: string;
+  aliases?: string[];
+  url?: string;
+  externalIds?: Record<string, string | number | string[] | undefined>;
+  affiliations?: string[];
+  homepage?: string;
+  paperCount?: number;
+  citationCount?: number;
+  hIndex?: number;
+};
 type SemanticPaper = {
   paperId: string;
   title: string;
@@ -22,6 +35,7 @@ type SemanticPaper = {
   citationCount?: number;
   influentialCitationCount?: number;
   fieldsOfStudy?: string[];
+  externalIds?: Record<string, string | number | undefined>;
   authors?: SemanticAuthor[];
 };
 type SearchResponse = { data?: SemanticPaper[] };
@@ -32,25 +46,67 @@ function apiHeaders(): HeadersInit {
     : {};
 }
 
-function authorPerson(
+function safeHomepage(value: unknown): string | undefined {
+  const normalized = sanitizePlainText(value, 2_000);
+  if (!normalized) return undefined;
+  try {
+    const url = new URL(normalized);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+export function semanticScholarAuthorPerson(
   author: SemanticAuthor,
-  paper: SemanticPaper,
-  index: number,
   sourceUrl: string,
+  fallbackId?: string,
+  additionalIdentities: PersonObservation["identities"] = [],
 ): PersonObservation {
-  const id = author.authorId || `${paper.paperId}#author-${index}`;
+  const id = author.authorId || fallbackId;
+  if (!id) throw new Error("Semantic Scholar author observation requires an identifier");
+  const orcid = normalizeOrcid(author.externalIds?.ORCID ?? author.externalIds?.orcid);
+  const displayName = sanitizePlainText(author.name, 200) || "Unknown author";
   return {
-    displayName: sanitizePlainText(author.name, 200) || `Unknown author ${index + 1}`,
+    displayName,
     identities: [
       {
         provider: "semantic-scholar",
         externalId: id,
-        profileUrl: author.authorId
+        profileUrl: author.url || (author.authorId
           ? `https://www.semanticscholar.org/author/${author.authorId}`
-          : undefined,
+          : undefined),
         verified: Boolean(author.authorId),
       },
+      ...(orcid
+        ? [{
+            provider: "orcid" as const,
+            externalId: orcid,
+            profileUrl: orcidProfileUrl(orcid),
+            verified: true,
+            confidence: 0.99,
+            proof: "provider-api" as const,
+            proofSourceUrl: sourceUrl,
+          }]
+        : []),
+      ...additionalIdentities,
     ],
+    affiliations: (author.affiliations ?? [])
+      .map((item) => sanitizePlainText(item, 300))
+      .filter(Boolean)
+      .slice(0, 12),
+    alternateNames: (author.aliases ?? [])
+      .map((name) => sanitizePlainText(name, 200))
+      .filter((name) => name && name.toLocaleLowerCase("en-US") !== displayName.toLocaleLowerCase("en-US"))
+      .slice(0, 12)
+      .map((name) => ({
+        name,
+        sourceUrl,
+        confidence: 0.94,
+        proof: "provider-profile" as const,
+      })),
+    websiteUrl: safeHomepage(author.homepage),
     sourceUrl,
   };
 }
@@ -58,7 +114,13 @@ function authorPerson(
 function paperEvents(paper: SemanticPaper, now: Date): DiscoveryEvent[] {
   const sourceUrl = paper.url || `https://www.semanticscholar.org/paper/${paper.paperId}`;
   return (paper.authors ?? []).slice(0, 20).map((author, index) => {
-    const person = authorPerson(author, paper, index, sourceUrl);
+    const authorship = doiAuthorshipIdentity(paper.externalIds?.DOI, index);
+    const person = semanticScholarAuthorPerson(
+      author,
+      sourceUrl,
+      `${paper.paperId}#author-${index}`,
+      authorship ? [authorship] : [],
+    );
     return createDiscoveryEvent({
       source: "semantic-scholar",
       sourceExternalId: `${paper.paperId}:${author.authorId ?? index}`,
@@ -106,6 +168,7 @@ export class SemanticScholarConnector implements DiscoveryConnector {
       "citationCount",
       "influentialCitationCount",
       "fieldsOfStudy",
+      "externalIds",
       "authors",
     ].join(",");
     const events: DiscoveryEvent[] = [];
@@ -141,16 +204,63 @@ export class SemanticScholarConnector implements DiscoveryConnector {
       (item) => item.provider === "semantic-scholar" && item.verified,
     );
     if (!identity) return null;
-    const fields = "paperId,title,abstract,url,year,publicationDate,citationCount,influentialCitationCount,fieldsOfStudy,authors";
-    const papers = await fetchJson<{ data?: SemanticPaper[] }>(
-      `https://api.semanticscholar.org/graph/v1/author/${encodeURIComponent(identity.externalId)}/papers?limit=30&fields=${encodeURIComponent(fields)}`,
-      {
-        headers: apiHeaders(),
-        signal: context.signal,
-        rateLimitPerSecond: process.env.SEMANTIC_SCHOLAR_API_KEY ? 1 : 0.2,
-      },
-    );
-    return { events: (papers.data ?? []).flatMap((paper) => paperEvents(paper, context.now)) };
+    const rateLimitPerSecond = process.env.SEMANTIC_SCHOLAR_API_KEY ? 1 : 0.2;
+    const warnings: string[] = [];
+    const events: DiscoveryEvent[] = [];
+    const profileUrl = `https://www.semanticscholar.org/author/${encodeURIComponent(identity.externalId)}`;
+    try {
+      const profileFields = "name,aliases,url,externalIds,affiliations,homepage,paperCount,citationCount,hIndex";
+      const author = await fetchJson<SemanticAuthor>(
+        `https://api.semanticscholar.org/graph/v1/author/${encodeURIComponent(identity.externalId)}?fields=${encodeURIComponent(profileFields)}`,
+        {
+          headers: apiHeaders(),
+          signal: context.signal,
+          rateLimitPerSecond,
+          retries: 0,
+          timeoutMs: 8_000,
+        },
+      );
+      const person = semanticScholarAuthorPerson(author, author.url || profileUrl, identity.externalId);
+      events.push(createDiscoveryEvent({
+        source: "semantic-scholar",
+        sourceExternalId: `author:${identity.externalId}:profile`,
+        type: "profile_observed",
+        title: `${person.displayName}'s research profile`,
+        description: person.affiliations?.length
+          ? `Affiliations: ${person.affiliations.join(", ")}`
+          : undefined,
+        occurredAt: context.now,
+        sourceUrl: author.url || profileUrl,
+        person,
+        metrics: {
+          papers: asNumber(author.paperCount),
+          citations: asNumber(author.citationCount),
+          hIndex: asNumber(author.hIndex),
+        },
+        confidence: 0.98,
+        now: context.now,
+      }));
+    } catch (error) {
+      warnings.push(`Author profile lookup failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+
+    try {
+      const fields = "paperId,title,abstract,url,year,publicationDate,citationCount,influentialCitationCount,fieldsOfStudy,externalIds,authors";
+      const papers = await fetchJson<{ data?: SemanticPaper[] }>(
+        `https://api.semanticscholar.org/graph/v1/author/${encodeURIComponent(identity.externalId)}/papers?limit=30&fields=${encodeURIComponent(fields)}`,
+        {
+          headers: apiHeaders(),
+          signal: context.signal,
+          rateLimitPerSecond,
+          retries: 0,
+          timeoutMs: 8_000,
+        },
+      );
+      events.push(...(papers.data ?? []).flatMap((paper) => paperEvents(paper, context.now)));
+    } catch (error) {
+      warnings.push(`Author paper lookup failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    return { events, warnings };
   }
 
   async expandGraph(context: ConnectorEnrichmentContext): Promise<GraphEdge[]> {
@@ -174,7 +284,11 @@ export class SemanticScholarConnector implements DiscoveryConnector {
         if (!author.authorId || author.authorId === source.externalId) continue;
         edges.push({
           source,
-          target: authorPerson(author, paper, index, sourceUrl),
+          target: semanticScholarAuthorPerson(
+            author,
+            sourceUrl,
+            `${paper.paperId}#author-${index}`,
+          ),
           relation: "coauthors_with",
           weight: 0.18,
           sourceUrl,

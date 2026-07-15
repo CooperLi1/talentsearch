@@ -12,6 +12,7 @@
     "test:operational": "node --env-file=.env.local --import tsx scripts/verify-local-api.ts",
     "setup:operator": "node --env-file=.env.local --import tsx scripts/bootstrap-operator.ts",
     "review:backlog": "node --env-file=.env.local --import tsx scripts/review-backlog.ts",
+    "rescore:candidates": "node --env-file=.env.local --import tsx scripts/rescore-candidates.ts",
     "workers:local": "node --env-file=.env.local --import tsx scripts/run-local-workers.ts",
     "workers:once": "node --env-file=.env.local --import tsx scripts/run-local-workers.ts --once",
     "audit:github-forks": "node --env-file=.env.local --import tsx scripts/prune-github-forks.ts"

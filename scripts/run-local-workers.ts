@@ -6,9 +6,19 @@ type WorkerJob = {
   path: string;
   intervalMs: number;
   initialDelayMs: number;
+  cronSchedule?: string;
 };
 
 const jobs: WorkerJob[] = [
+  {
+    name: "weekly digest",
+    path: "/api/cron/weekly-digest",
+    intervalMs: 15 * 60 * 1_000,
+    initialDelayMs: 15_000,
+    // The production cron sends this header. Matching it locally gives the
+    // digest route the same late-invocation tolerance as Vercel Hobby.
+    cronSchedule: "local-worker",
+  },
   {
     name: "enrichment",
     path: "/api/cron/enrichment",
@@ -20,6 +30,12 @@ const jobs: WorkerJob[] = [
     path: "/api/cron/briefs",
     intervalMs: 10 * 60 * 1_000,
     initialDelayMs: 60_000,
+  },
+  {
+    name: "discovery",
+    path: "/api/cron/discovery",
+    intervalMs: 24 * 60 * 60 * 1_000,
+    initialDelayMs: 3 * 60 * 1_000,
   },
 ];
 
@@ -42,7 +58,12 @@ async function runJob(job: WorkerJob, origin: string, secret: string) {
   const startedAt = Date.now();
   try {
     const response = await fetch(new URL(job.path, origin), {
-      headers: { authorization: `Bearer ${secret}` },
+      headers: {
+        authorization: `Bearer ${secret}`,
+        ...(job.cronSchedule
+          ? { "x-vercel-cron-schedule": job.cronSchedule }
+          : {}),
+      },
       signal: controller.signal,
     });
     const body = (await response.text()).slice(0, 1_500);
@@ -74,7 +95,9 @@ async function main() {
     return;
   }
 
-  console.log(`[workers] running against ${origin}; enrichment every 5 minutes, briefs every 10 minutes`);
+  console.log(
+    `[workers] running against ${origin}; digest every 15 minutes, enrichment every 5 minutes, briefs every 10 minutes, discovery daily`,
+  );
   const running = new Set<string>();
   const schedule = (job: WorkerJob) => {
     const tick = async () => {

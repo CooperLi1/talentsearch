@@ -15,6 +15,13 @@ import {
   withGitHubLookback,
 } from "../lib/discovery/connectors/github";
 import { OpenAlexConnector } from "../lib/discovery/connectors/openalex";
+import { semanticScholarAuthorPerson } from "../lib/discovery/connectors/semantic-scholar";
+import {
+  doiAuthorshipIdentity,
+  normalizeDoi,
+  parseDoiAuthorshipIdentity,
+} from "../lib/discovery/doi";
+import { normalizeOrcid } from "../lib/discovery/orcid";
 
 test("recommended query sets fit the shared eight-query execution budget", () => {
   for (const [source, queries] of Object.entries(RECOMMENDED_CONNECTOR_QUERIES)) {
@@ -127,4 +134,50 @@ test("OpenAlex refuses to make a request without its server-side API key", async
     if (previous === undefined) delete process.env.OPENALEX_API_KEY;
     else process.env.OPENALEX_API_KEY = previous;
   }
+});
+
+test("academic author profiles preserve durable ORCID and operator-useful context", () => {
+  const person = semanticScholarAuthorPerson({
+    authorId: "1741101",
+    name: "Ada Example",
+    aliases: ["A. Example", "Ada Example"],
+    url: "https://www.semanticscholar.org/author/1741101",
+    externalIds: { ORCID: "https://orcid.org/0000-0002-1825-0097" },
+    affiliations: ["Example Robotics Lab"],
+    homepage: "https://ada.example/research",
+  }, "https://www.semanticscholar.org/author/1741101");
+
+  assert.deepEqual(person.identities.map((identity) => identity.provider), [
+    "semantic-scholar",
+    "orcid",
+  ]);
+  assert.equal(person.identities[1]?.externalId, "0000-0002-1825-0097");
+  assert.deepEqual(person.affiliations, ["Example Robotics Lab"]);
+  assert.deepEqual(person.alternateNames?.map((item) => item.name), ["A. Example"]);
+  assert.equal(person.websiteUrl, "https://ada.example/research");
+});
+
+test("ORCID normalization rejects malformed and checksum-invalid identifiers", () => {
+  assert.equal(normalizeOrcid("http://orcid.org/0000-0002-1825-0097"), "0000-0002-1825-0097");
+  assert.equal(normalizeOrcid("0000-0002-1825-0098"), undefined);
+  assert.equal(normalizeOrcid("not-an-orcid"), undefined);
+});
+
+test("DOI authorship identities join scholarly indexes without name matching", () => {
+  assert.equal(normalizeDoi("https://doi.org/10.1145/Example.123"), "10.1145/example.123");
+  assert.deepEqual(doiAuthorshipIdentity("10.1145/Example.123", 2), {
+    provider: "doi-authorship",
+    externalId: "10.1145/example.123#author-2",
+    profileUrl: "https://doi.org/10.1145/example.123",
+    verified: true,
+    confidence: 0.98,
+    proof: "provider-api",
+    proofSourceUrl: "https://doi.org/10.1145/example.123",
+  });
+  assert.equal(doiAuthorshipIdentity("not-a-doi", 0), undefined);
+  assert.deepEqual(parseDoiAuthorshipIdentity("10.1145/example.123#author-2"), {
+    doi: "10.1145/example.123",
+    authorIndex: 2,
+  });
+  assert.equal(parseDoiAuthorshipIdentity("10.1145/example.123#author-nope"), undefined);
 });

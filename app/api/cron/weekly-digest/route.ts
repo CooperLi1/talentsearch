@@ -114,6 +114,13 @@ export async function GET(request: Request) {
         : undefined,
     );
     if (!schedule.due || schedule.phase === "idle") {
+      console.info("[weekly-digest] skipped", {
+        checkedAt: new Date().toISOString(),
+        deliveryHourUtc: schedule.deliveryHourUtc,
+        deliveryMinuteUtc: schedule.deliveryMinuteUtc,
+        daysOfWeek: schedule.daysOfWeek,
+        reason: "not-scheduled",
+      });
       return Response.json({ ok: true, skipped: true, reason: "not-scheduled" });
     }
     const { dedupeKey, periodStart, periodEnd } = schedule;
@@ -173,6 +180,11 @@ export async function GET(request: Request) {
       throw new Error("Digest candidate snapshot is incomplete");
     }
     if (schedule.phase === "prepare") {
+      console.info("[weekly-digest] prepared", {
+        digestId: digest.id,
+        candidateCount: digest.candidateCount,
+        scheduledFor: periodEnd,
+      });
       return Response.json({
         ok: true,
         prepared: true,
@@ -228,6 +240,12 @@ export async function GET(request: Request) {
         activeSubscribers.map((subscriber) => ({ subscriberId: subscriber.id, deliveryStatus: "delivered", lastSentAt: sentAt })),
       );
     }
+    console.info("[weekly-digest] delivery finalized", {
+      digestId: claimedDigest.id,
+      status: delivery.status,
+      candidateCount: deliveryCandidates.length,
+      recipientCount: delivery.recipientCount,
+    });
     return Response.json({ ok: true, digestId: claimedDigest.id, delivery });
   } catch (error) {
     if (claimedDigest && !deliveryFinalized) {

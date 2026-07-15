@@ -80,6 +80,19 @@ function comparableUrl(value: string) {
   }
 }
 
+export function hasCorroboratedPageIdentity(input: {
+  nameMatch: boolean;
+  affiliationMatch: boolean;
+  matchedProject: boolean;
+  linkedKnownProfile: boolean;
+  sameKnownWebsite: boolean;
+}) {
+  return input.matchedProject ||
+    input.linkedKnownProfile ||
+    (input.nameMatch && input.affiliationMatch) ||
+    (input.nameMatch && input.sameKnownWebsite);
+}
+
 export function projectLocatorContext(events: DiscoveryEvent[]) {
   const projects = new Map<string, { name: string; url: string; strength: number }>();
   for (const event of events) {
@@ -187,6 +200,8 @@ async function locate(query: string, count: number, signal?: AbortSignal) {
     },
     signal,
     rateLimitPerSecond: 0.5,
+    retries: 1,
+    timeoutMs: 8_000,
     maxBytes: 1_500_000,
   });
   // Brave content is only a transient locator. Only normalized result URLs survive this function.
@@ -267,6 +282,7 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
             signal: context.signal,
             rateLimitPerSecond: 0.2,
             timeoutMs: 8_000,
+            retries: 0,
             maxBytes: 2_500_000,
             headers: { accept: "text/html,application/xhtml+xml" },
           });
@@ -322,12 +338,17 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
                 host.endsWith(`.${knownWebsiteHost}`) ||
                 knownWebsiteHost.endsWith(`.${host}`)),
           );
-          const identityPresent =
-            authorMatch ||
-            Boolean(matchedProject) ||
-            linkedKnownProfile ||
-            (nameMatch && affiliationMatch) ||
-            (nameMatch && sameKnownWebsite);
+          // A matching author meta tag is not identity proof: common names can
+          // otherwise bind an unrelated personal site to a candidate. Require
+          // a second public anchor such as an affiliation, known account, known
+          // project, or an already-verified website domain.
+          const identityPresent = hasCorroboratedPageIdentity({
+            nameMatch,
+            affiliationMatch,
+            matchedProject: Boolean(matchedProject),
+            linkedKnownProfile,
+            sameKnownWebsite,
+          });
           if (
             !identityPresent ||
             !title ||

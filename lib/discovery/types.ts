@@ -26,7 +26,7 @@ export const SOURCE_KINDS = [
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export type ExternalIdentity = {
-  provider: SourceKind | "orcid" | "email" | "website";
+  provider: SourceKind | "orcid" | "doi-authorship" | "email" | "website";
   externalId: string;
   profileUrl?: string;
   username?: string;

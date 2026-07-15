@@ -1,4 +1,6 @@
 import { fetchJson } from "../http";
+import { doiAuthorshipIdentity } from "../doi";
+import { normalizeOrcid, orcidProfileUrl } from "../orcid";
 import { sanitizePlainText } from "../security";
 import type {
   ConnectorEnrichmentContext,
@@ -41,6 +43,10 @@ type OpenAlexResponse = {
   meta?: { next_cursor?: string | null };
 };
 
+type OpenAlexAuthorResponse = {
+  results?: OpenAlexAuthor[];
+};
+
 function authenticate(url: URL) {
   const apiKey = process.env.OPENALEX_API_KEY?.trim();
   if (!apiKey) {
@@ -54,6 +60,7 @@ function authenticate(url: URL) {
 }
 
 function identity(author: OpenAlexAuthor): ExternalIdentity[] {
+  const orcid = normalizeOrcid(author.orcid);
   return [
     {
       provider: "openalex",
@@ -61,12 +68,12 @@ function identity(author: OpenAlexAuthor): ExternalIdentity[] {
       profileUrl: author.id,
       verified: true,
     },
-    ...(author.orcid
+    ...(orcid
       ? [
           {
             provider: "orcid" as const,
-            externalId: author.orcid.replace("https://orcid.org/", ""),
-            profileUrl: author.orcid,
+            externalId: orcid,
+            profileUrl: orcidProfileUrl(orcid),
             verified: true,
           },
         ]
@@ -74,10 +81,21 @@ function identity(author: OpenAlexAuthor): ExternalIdentity[] {
   ];
 }
 
-function person(authorship: OpenAlexAuthorship, sourceUrl: string): PersonObservation {
+function person(
+  authorship: OpenAlexAuthorship,
+  sourceUrl: string,
+  doi?: string | null,
+  authorIndex?: number,
+): PersonObservation {
+  const authorshipIdentity = authorIndex === undefined
+    ? undefined
+    : doiAuthorshipIdentity(doi, authorIndex);
   return {
     displayName: sanitizePlainText(authorship.author.display_name, 200),
-    identities: identity(authorship.author),
+    identities: [
+      ...identity(authorship.author),
+      ...(authorshipIdentity ? [authorshipIdentity] : []),
+    ],
     affiliations: authorship.institutions
       ?.map((item) => sanitizePlainText(item.display_name, 300))
       .filter(Boolean),
@@ -92,7 +110,7 @@ function workUrl(work: OpenAlexWork) {
 function workEvents(work: OpenAlexWork, now: Date): DiscoveryEvent[] {
   const sourceUrl = workUrl(work);
   const topics = work.topics?.slice(0, 8).map((topic) => topic.display_name) ?? [];
-  return (work.authorships ?? []).slice(0, 20).map((authorship) =>
+  return (work.authorships ?? []).slice(0, 20).map((authorship, authorIndex) =>
     createDiscoveryEvent({
       source: "openalex",
       sourceExternalId: `${work.id}:${authorship.author.id}`,
@@ -101,7 +119,7 @@ function workEvents(work: OpenAlexWork, now: Date): DiscoveryEvent[] {
       description: topics.length ? `Research areas: ${topics.join(", ")}` : undefined,
       occurredAt: work.publication_date,
       sourceUrl,
-      person: person(authorship, sourceUrl),
+      person: person(authorship, sourceUrl, work.doi, authorIndex),
       metrics: { citations: asNumber(work.cited_by_count) },
       tags: topics,
       confidence: authorship.author.id ? 0.96 : 0.7,
@@ -159,9 +177,27 @@ export class OpenAlexConnector implements DiscoveryConnector {
   }
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
-    const author = context.person.identities.find((item) => item.provider === "openalex");
-    if (!author) return null;
-    const authorId = author.externalId.replace(/^https:\/\/openalex\.org\//, "");
+    const knownAuthor = context.person.identities.find((item) => item.provider === "openalex");
+    let authorId = knownAuthor?.externalId.replace(/^https:\/\/openalex\.org\//, "");
+    if (!authorId) {
+      const orcid = context.person.identities
+        .filter((item) => item.provider === "orcid" && item.verified === true)
+        .map((item) => normalizeOrcid(item.externalId))
+        .find(Boolean);
+      if (!orcid) return null;
+      const authorUrl = new URL("https://api.openalex.org/authors");
+      authorUrl.searchParams.set("filter", `orcid:${orcid}`);
+      authorUrl.searchParams.set("per-page", "1");
+      authenticate(authorUrl);
+      const authorResponse = await fetchJson<OpenAlexAuthorResponse>(authorUrl.toString(), {
+        signal: context.signal,
+        rateLimitPerSecond: 4,
+        retries: 1,
+        timeoutMs: 8_000,
+      });
+      authorId = authorResponse.results?.[0]?.id.replace("https://openalex.org/", "");
+      if (!authorId) return { events: [], warnings: [`No OpenAlex author matched ORCID ${orcid}`] };
+    }
     const url = new URL("https://api.openalex.org/works");
     url.searchParams.set("filter", `author.id:${authorId},is_retracted:false`);
     url.searchParams.set("sort", "publication_date:desc,cited_by_count:desc");
@@ -170,6 +206,8 @@ export class OpenAlexConnector implements DiscoveryConnector {
     const response = await fetchJson<OpenAlexResponse>(url.toString(), {
       signal: context.signal,
       rateLimitPerSecond: 4,
+      retries: 1,
+      timeoutMs: 8_000,
     });
     return { events: (response.results ?? []).flatMap((work) => workEvents(work, context.now)) };
   }

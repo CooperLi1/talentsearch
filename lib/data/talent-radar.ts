@@ -1344,8 +1344,29 @@ export async function getAllSourceRecords(workspace: string | number, limit = 10
 }
 
 export async function createIngestionRun(input: CreateIngestionRunInput): Promise<IngestionRunRecord> {
-  const { data, error } = await db().from("ingestion_runs").insert({
-    workspace_id: workspaceId(input.workspaceId), source_id: input.sourceId ? Number(input.sourceId) : null,
+  const client = db();
+  const wid = workspaceId(input.workspaceId);
+  // A serverless timeout terminates JavaScript before the catch block can
+  // close its ledger row. Recover those abandoned rows before starting new
+  // work so the dashboard reflects durable progress instead of phantom runs.
+  const staleBefore = new Date(Date.now() - 15 * 60 * 1_000).toISOString();
+  const recoveredAt = new Date().toISOString();
+  const stale = await client
+    .from("ingestion_runs")
+    .update({
+      status: "failed",
+      finished_at: recoveredAt,
+      heartbeat_at: recoveredAt,
+      error_code: "WORKER_TIMEOUT",
+      error_message: "Worker stopped before recording completion; recovered by the next run.",
+    })
+    .eq("workspace_id", wid)
+    .eq("status", "running")
+    .lt("started_at", staleBefore);
+  fail(stale.error);
+
+  const { data, error } = await client.from("ingestion_runs").insert({
+    workspace_id: wid, source_id: input.sourceId ? Number(input.sourceId) : null,
     parent_run_id: input.parentRunId ? Number(input.parentRunId) : null, run_kind: input.kind ?? "scheduled",
     status: "queued", scheduled_for: input.scheduledFor ?? new Date().toISOString(), cursor: input.cursor ?? {},
   }).select("*").single();

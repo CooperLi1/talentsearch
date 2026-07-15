@@ -117,6 +117,52 @@ function evidenceGroup(event: DiscoveryEvent) {
   }
 }
 
+/**
+ * Two scholarly indexes can independently record the same DOI authorship. Add
+ * the second citation to model-written facts about that exact work so the
+ * operator can see the corroboration without asking the model to restate the
+ * same achievement as filler.
+ */
+export function attachEquivalentPublisherCitations(
+  facts: Array<{ text: string; sourceIds: string[] }>,
+  events: DiscoveryEvent[],
+) {
+  const evidenceIds = events.map((_event, index) => `E${index + 1}`);
+  const byAuthorship = new Map<string, number[]>();
+  events.forEach((event, index) => {
+    for (const identity of event.person.identities) {
+      if (identity.provider !== "doi-authorship" || identity.verified !== true) continue;
+      const indexes = byAuthorship.get(identity.externalId) ?? [];
+      indexes.push(index);
+      byAuthorship.set(identity.externalId, indexes);
+    }
+  });
+  return facts.map((fact) => {
+    const sourceIndexes = fact.sourceIds.flatMap((sourceId) => {
+      const index = evidenceIds.indexOf(sourceId);
+      return index >= 0 ? [index] : [];
+    });
+    const publishers = new Set(sourceIndexes.map((index) => evidenceGroup(events[index])));
+    const additions: string[] = [];
+    for (const sourceIndex of sourceIndexes) {
+      for (const identity of events[sourceIndex].person.identities) {
+        if (identity.provider !== "doi-authorship" || identity.verified !== true) continue;
+        const corroboratingIndex = (byAuthorship.get(identity.externalId) ?? []).find(
+          (index) => !publishers.has(evidenceGroup(events[index])),
+        );
+        if (corroboratingIndex === undefined) continue;
+        additions.push(evidenceIds[corroboratingIndex]);
+        publishers.add(evidenceGroup(events[corroboratingIndex]));
+        break;
+      }
+      if (additions.length) break;
+    }
+    return additions.length
+      ? { ...fact, sourceIds: [...new Set([...fact.sourceIds, ...additions])].slice(0, 2) }
+      : fact;
+  });
+}
+
 /** Interleave publishers so one prolific index cannot crowd out corroboration. */
 export function selectDiverseBriefEvidence(events: DiscoveryEvent[], limit = 40) {
   const boundedLimit = Math.max(1, Math.min(80, Math.floor(limit)));
@@ -508,6 +554,10 @@ ${JSON.stringify(researchFocusEvidenceIds)}`;
       timeout: { totalMs: 40_000 },
       maxOutputTokens: 900,
     });
+    rewrite.output.operatorFacts = attachEquivalentPublisherCitations(
+      rewrite.output.operatorFacts,
+      selectedBriefEvents,
+    );
     const needsDiversityRepair =
       requiresPublisherDiversity &&
       operatorFactPublisherCount(rewrite.output.operatorFacts, briefEvidence) < 2;
@@ -533,6 +583,10 @@ Your prior rewrite still failed the operator brief contract. Replace specialist 
         timeout: { totalMs: 40_000 },
         maxOutputTokens: 900,
       });
+      rewrite.output.operatorFacts = attachEquivalentPublisherCitations(
+        rewrite.output.operatorFacts,
+        selectedBriefEvents,
+      );
     }
     if (needsPlainLanguageRetry(rewrite.output.operatorFacts)) {
       const cleanFacts = rewrite.output.operatorFacts.filter(
@@ -558,6 +612,7 @@ Your prior rewrite still failed the operator brief contract. Replace specialist 
     const verifyFacts = async (
       facts: Array<{ text: string; sourceIds: string[] }>,
     ) => {
+      facts = attachEquivalentPublisherCitations(facts, selectedBriefEvents);
       const verification = await generateText({
         model,
         output: Output.object({ schema: operatorFactsVerificationSchema }),

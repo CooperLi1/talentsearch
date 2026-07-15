@@ -62,7 +62,7 @@ function normalizedName(name: string) {
 }
 
 function provider(identity: CandidateIdentity): ExternalIdentity["provider"] {
-  const known = [...SOURCE_KINDS, "orcid", "email", "website"] as string[];
+  const known = [...SOURCE_KINDS, "orcid", "doi-authorship", "email", "website"] as string[];
   return known.includes(identity.provider)
     ? (identity.provider as ExternalIdentity["provider"])
     : "website";

@@ -4,6 +4,7 @@ import test from "node:test";
 import { enrichPeople } from "../lib/discovery/enrichment";
 import {
   candidateResearchQueries,
+  hasCorroboratedPageIdentity,
   projectLocatorContext,
 } from "../lib/discovery/connectors/brave-enrichment";
 import { ownedWorkProfileFromHtml } from "../lib/discovery/connectors/web-presence";
@@ -98,6 +99,33 @@ test("enrichment follows newly verified providers and websites in the same pass"
   assert.equal(result.results[0]?.person.websiteUrl, "https://ada.example");
 });
 
+test("a verified DOI authorship bridge schedules Crossref enrichment", async () => {
+  const person: PersonObservation = {
+    displayName: "Ada Example",
+    identities: [{
+      provider: "doi-authorship",
+      externalId: "10.1145/example.123#author-2",
+      verified: true,
+    }],
+    sourceUrl: "https://doi.org/10.1145/example.123",
+  };
+  let calls = 0;
+  await enrichPeople({
+    people: [person],
+    connectors: new Map([["crossref", {
+      kind: "crossref",
+      displayName: "Crossref",
+      discover: async () => ({ events: [] }),
+      enrich: async () => {
+        calls += 1;
+        return { events: [] };
+      },
+    }]]),
+    settings: { crossref: { enabled: true } },
+  });
+  assert.equal(calls, 1);
+});
+
 test("public web enrichment receives prior evidence and newly observed provider events", async () => {
   const person: PersonObservation = {
     displayName: "Ada Example",
@@ -183,6 +211,30 @@ test("direct profile URLs become provider hypotheses without treating arbitrary 
   });
   assert.equal(crossProfileClaimForUrl("https://github.com/ada-example/project"), null);
   assert.equal(crossProfileClaimForUrl("https://example.com/about"), null);
+});
+
+test("an exact author name alone cannot bind an unrelated public page", () => {
+  assert.equal(hasCorroboratedPageIdentity({
+    nameMatch: true,
+    affiliationMatch: false,
+    matchedProject: false,
+    linkedKnownProfile: false,
+    sameKnownWebsite: false,
+  }), false);
+  assert.equal(hasCorroboratedPageIdentity({
+    nameMatch: true,
+    affiliationMatch: true,
+    matchedProject: false,
+    linkedKnownProfile: false,
+    sameKnownWebsite: false,
+  }), true);
+  assert.equal(hasCorroboratedPageIdentity({
+    nameMatch: true,
+    affiliationMatch: false,
+    matchedProject: false,
+    linkedKnownProfile: true,
+    sameKnownWebsite: false,
+  }), true);
 });
 
 test("a verified personal homepage yields bounded work evidence without requiring an article date", () => {

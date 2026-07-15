@@ -37,6 +37,9 @@ type RunOptions = {
   configuration?: DiscoveryConfiguration;
   sourceKinds?: SourceKind[];
   boundedEventLimit?: number;
+  graphExpansion?: boolean;
+  intelligenceRefreshLimit?: number;
+  aiEventSummaryLimit?: number;
   signal?: AbortSignal;
 };
 
@@ -151,9 +154,13 @@ async function refreshIntelligence(input: {
   weights?: ScoringWeights;
 }) {
   const prepared = await mapLimit(input.targets, 3, async (target) => {
-    const storedEvents = target.events.length
-      ? target.events
-      : await input.repository.listCandidateEvents(input.workspaceId, target.id);
+    // A fresh enrichment aggregate contains only events from this run. Reload
+    // the persisted history before scoring affected candidates so a profile
+    // locator cannot erase years of substantive evidence and reset the score.
+    const affectedThisRun = input.runEvents?.has(target.id) ?? false;
+    const storedEvents = affectedThisRun || !target.events.length
+      ? await input.repository.listCandidateEvents(input.workspaceId, target.id)
+      : target.events;
     const events = deduplicateEvents([
       ...storedEvents,
       ...(input.runEvents?.get(target.id) ?? []),
@@ -342,7 +349,10 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
     );
     const aiSummaryLimit = Math.min(
       100,
-      Math.max(0, Number(process.env.AI_EVENT_SUMMARY_LIMIT ?? 30)),
+      Math.max(
+        0,
+        Number(options.aiEventSummaryLimit ?? process.env.AI_EVENT_SUMMARY_LIMIT ?? 30),
+      ),
     );
     let remainingAiSummaries = aiSummaryLimit;
     const allocateAiSummaryKeys = (batch: DiscoveryEvent[]) => {
@@ -376,7 +386,9 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       });
     }
 
-    const requestedAutomaticReviewLimit = Number(process.env.AUTOMATIC_REVIEW_LIMIT ?? 100);
+    const requestedAutomaticReviewLimit = Number(
+      options.intelligenceRefreshLimit ?? process.env.AUTOMATIC_REVIEW_LIMIT ?? 100,
+    );
     const automaticReviewLimit = Number.isFinite(requestedAutomaticReviewLimit)
       ? Math.max(0, Math.floor(requestedAutomaticReviewLimit))
       : 100;
@@ -425,10 +437,13 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       });
     }
 
+    const graphExpansionEnabled = options.graphExpansion !== false;
     const requestedGraphSeedLimit = Number(process.env.GRAPH_SEED_LIMIT ?? 12);
-    const graphSeedLimit = Number.isFinite(requestedGraphSeedLimit)
-      ? Math.min(25, Math.max(0, Math.floor(requestedGraphSeedLimit)))
-      : 12;
+    const graphSeedLimit = !graphExpansionEnabled
+      ? 0
+      : Number.isFinite(requestedGraphSeedLimit)
+        ? Math.min(25, Math.max(0, Math.floor(requestedGraphSeedLimit)))
+        : 12;
     const graphSeeds = graphSeedLimit
       ? await options.repository.listGraphExpansionSeeds(options.workspaceId, graphSeedLimit)
       : [];
@@ -481,10 +496,12 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
     recordPersistence(graphEvents, graphPersisted);
 
     const alreadyEnrichedCandidateIds = new Set(enrichmentTargets.map((target) => target.id));
-    const graphEnrichmentLimit = Math.min(
-      5,
-      Math.max(0, Number(process.env.GRAPH_CANDIDATE_ENRICHMENT_LIMIT ?? 5)),
-    );
+    const graphEnrichmentLimit = graphExpansionEnabled
+      ? Math.min(
+          5,
+          Math.max(0, Number(process.env.GRAPH_CANDIDATE_ENRICHMENT_LIMIT ?? 5)),
+        )
+      : 0;
     const graphPeople = [...graphPersisted.affected]
       .filter(([candidateId]) => !alreadyEnrichedCandidateIds.has(candidateId))
       .sort(
@@ -540,7 +557,9 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
         ]);
       }
     }
-    const requestedIntelligenceLimit = Number(process.env.INTELLIGENCE_REFRESH_LIMIT ?? 30);
+    const requestedIntelligenceLimit = Number(
+      options.intelligenceRefreshLimit ?? process.env.INTELLIGENCE_REFRESH_LIMIT ?? 30,
+    );
     const configuredIntelligenceLimit = Number.isFinite(requestedIntelligenceLimit)
       ? Math.max(0, Math.floor(requestedIntelligenceLimit))
       : 30;

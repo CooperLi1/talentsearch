@@ -125,6 +125,10 @@ export async function enrichPeople(input: {
             identity.verified !== true &&
             !(identity.provider === "linkedin-manual" && isLinkedInDirectAccessApproved())
           ) continue;
+          if (identity.provider === "doi-authorship") {
+            enqueue("crossref");
+            continue;
+          }
           enqueue(connectorKindForIdentity(identity.provider));
         }
         if (enrichedPerson.websiteUrl) enqueue("web-presence");

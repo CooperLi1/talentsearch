@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  attachEquivalentPublisherCitations,
   filterVerifiedOperatorFacts,
   hasUnsupportedAgencyClaim,
   isSubstantiveBriefEvent,
@@ -76,6 +77,36 @@ test("brief evidence interleaves publishers before repeating one", () => {
     selectDiverseBriefEvidence([githubEvents[0], braveGitHub, research], 3)
       .map((item) => item.source),
     ["github", "semantic-scholar", "brave-enrichment"],
+  );
+});
+
+test("equivalent DOI authorship evidence adds a visible independent citation", () => {
+  const identity = {
+    provider: "doi-authorship" as const,
+    externalId: "10.1145/example.123#author-0",
+    verified: true,
+  };
+  const semanticScholar: DiscoveryEvent = {
+    ...event,
+    source: "semantic-scholar",
+    sourceUrl: "https://www.semanticscholar.org/paper/example",
+    person: { ...event.person, identities: [identity] },
+  };
+  const crossref: DiscoveryEvent = {
+    ...event,
+    idempotencyKey: "crossref-paper",
+    source: "crossref",
+    sourceUrl: "https://doi.org/10.1145/example.123",
+    person: { ...event.person, identities: [identity] },
+  };
+  assert.deepEqual(
+    attachEquivalentPublisherCitations([
+      { text: "Ada Example published a paper about compilers.", sourceIds: ["E1"] },
+    ], [semanticScholar, crossref]),
+    [{
+      text: "Ada Example published a paper about compilers.",
+      sourceIds: ["E1", "E2"],
+    }],
   );
 });
 

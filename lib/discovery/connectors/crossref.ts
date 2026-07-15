@@ -1,6 +1,9 @@
 import { fetchJson } from "../http";
+import { doiAuthorshipIdentity, parseDoiAuthorshipIdentity } from "../doi";
+import { normalizeOrcid, orcidProfileUrl } from "../orcid";
 import { sanitizePlainText } from "../security";
 import type {
+  ConnectorEnrichmentContext,
   ConnectorRunContext,
   ConnectorRunResult,
   DiscoveryConnector,
@@ -33,6 +36,10 @@ type CrossrefResponse = {
   message?: { items?: CrossrefWork[] };
 };
 
+type CrossrefWorkResponse = {
+  message?: CrossrefWork;
+};
+
 function publishedAt(work: CrossrefWork): string | undefined {
   const parts = work.published?.["date-parts"]?.[0];
   if (parts?.[0]) {
@@ -51,21 +58,24 @@ function authorPerson(
   index: number,
   sourceUrl: string,
 ): PersonObservation {
-  const orcid = author.ORCID?.replace("http://orcid.org/", "https://orcid.org/");
+  const orcid = normalizeOrcid(author.ORCID);
+  const authorship = doiAuthorshipIdentity(work.DOI, index);
   return {
     displayName: authorName(author) || `Unknown author ${index + 1}`,
     identities: [
       {
-        provider: "crossref",
-        externalId: `${work.DOI}#author-${index}`,
-        verified: false,
+        ...(authorship ?? {
+          provider: "crossref" as const,
+          externalId: `${work.DOI}#author-${index}`,
+          verified: false,
+        }),
       },
       ...(orcid
         ? [
             {
               provider: "orcid" as const,
-              externalId: orcid.replace("https://orcid.org/", ""),
-              profileUrl: orcid,
+              externalId: orcid,
+              profileUrl: orcidProfileUrl(orcid),
               verified: true,
             },
           ]
@@ -96,7 +106,7 @@ function eventsForWork(work: CrossrefWork, now: Date): DiscoveryEvent[] {
       person,
       metrics: { citations: asNumber(work["is-referenced-by-count"]) },
       tags: work.subject,
-      confidence: author.ORCID ? 0.96 : 0.68,
+      confidence: person.identities.some((identity) => identity.provider === "orcid") ? 0.96 : 0.68,
       now,
     });
   });
@@ -152,5 +162,33 @@ export class CrossrefConnector implements DiscoveryConnector {
       cursor: { since: context.now.toISOString() },
       warnings,
     };
+  }
+
+  async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
+    const authorship = context.person.identities
+      .filter((identity) => identity.provider === "doi-authorship" && identity.verified === true)
+      .map((identity) => parseDoiAuthorshipIdentity(identity.externalId))
+      .find(Boolean);
+    if (!authorship) return null;
+
+    const url = new URL(`https://api.crossref.org/works/${encodeURIComponent(authorship.doi)}`);
+    if (process.env.CROSSREF_EMAIL) url.searchParams.set("mailto", process.env.CROSSREF_EMAIL);
+    const response = await fetchJson<CrossrefWorkResponse>(url.toString(), {
+      signal: context.signal,
+      rateLimitPerSecond: 3,
+      retries: 1,
+      timeoutMs: 8_000,
+    });
+    const work = response.message;
+    if (!work) return { events: [], warnings: [`Crossref did not return DOI ${authorship.doi}`] };
+    const expectedIdentity = `${authorship.doi}#author-${authorship.authorIndex}`;
+    const matched = eventsForWork(work, context.now).filter((event) =>
+      event.person.identities.some((identity) =>
+        identity.provider === "doi-authorship" && identity.externalId === expectedIdentity,
+      ),
+    );
+    return matched.length
+      ? { events: matched }
+      : { events: [], warnings: [`Crossref DOI ${authorship.doi} did not contain the expected author position`] };
   }
 }

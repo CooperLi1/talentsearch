@@ -124,6 +124,10 @@ A database query can correctly prioritize a backlog and still fail if applicatio
 
 Publisher counts used for scheduling, scoring, queue gates, and UI labels must all exclude the same low-confidence and non-substantive events. If one refresh path counts weak locator matches, it can undo a database correction and make a single-source record look corroborated again.
 
+## Fresh enrichment is a delta, not a candidate history
+
+An enrichment result contains only evidence found during that pass. Before recalculating score or source coverage for an affected candidate, reload the persisted event history and merge the delta into it. Scoring a locator-only delta can erase years of substantive work and silently remove a strong person from the queue.
+
 ## Enrichment should optimize marginal surfacing yield
 
 A low-coverage-first backlog can let zero-score, zero-source records consume every bounded research slot while strong single-source candidates remain one corroborating source away from the operator queue. Rank due enrichment by demonstrated quality first, then use source coverage and oldest attempt as tie-breakers. Automatic review should establish quality; enrichment should spend its separate budget where another source is most likely to produce an operator-ready profile.
@@ -151,3 +155,23 @@ An enrichment pass can insert several events for one person. If each event incre
 ## Cron frequency limits apply per schedule, not per route
 
 When a hosting plan permits many cron jobs but each expression can run only daily, one oversized invocation is the wrong workaround: it still inherits the function timeout. If the platform explicitly supports repeated routes, distribute bounded, lease-backed invocations across distinct once-daily expressions. Assume plan-level timing jitter can make shards overlap, preserve `SKIP LOCKED` claims and idempotent completion, and give time-sensitive dispatchers a bounded catch-up window tied to the original scheduled timestamp.
+
+## A local scheduler must cover every production job class
+
+Running enrichment and briefing locally can make a pipeline look alive while delivery and source discovery remain completely inert. Keep the local worker manifest in parity with every production cron route, and send the production scheduler headers that affect route behavior. Verify each job class independently from its durable database output: ingestion runs for discovery and enrichment, current-policy brief counts for model work, and sent digest records plus subscriber timestamps for email.
+
+## More cron shards do not justify repeating every pipeline phase
+
+A frequent enrichment shard should claim a small research batch and return. If it also repeats graph expansion and a broad review refresh, the extra schedules multiply the most expensive work and can produce more timeouts instead of more completed people. Give discovery, graph expansion, enrichment, briefing, and delivery separate budgets, then measure completed durable records rather than invocation count.
+
+## Serverless run ledgers need timeout recovery
+
+A function timeout kills the process before application-level catch or finally logic can close a run row. On each new invocation, atomically fail running ledger entries older than the platform budget and let expired candidate claims rotate normally. Otherwise schedules can be firing while the operator sees an ever-growing set of phantom running jobs.
+
+## Identity bridges must route to a real enrichment connector
+
+Persisting a safe cross-index identity is not enough if the enrichment scheduler assumes every identity provider is also a connector name. Map bridge identities, such as DOI plus author position, to the provider that can resolve them and test that the connector is actually invoked. Measure inserted corroborating evidence, not merely the presence of the bridge row.
+
+## New evidence should supersede failed-generation backoff
+
+A brief that failed its evidence contract should back off, but a later substantive source may be exactly what makes it generatable. Clear the brief retry deadline when new high-confidence evidence is inserted, while excluding profile and graph hypotheses so weak locators cannot create a generation loop.
