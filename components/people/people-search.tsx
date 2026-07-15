@@ -1,7 +1,7 @@
 "use client";
 
 import { CandidateActions } from "@/components/candidates/candidate-actions";
-import type { OperatorBriefFact } from "@/lib/candidates/operator-brief";
+import type { PeopleCandidateView } from "@/lib/candidates/people-view";
 import {
   buildSearchFacetOptions,
   candidateMatchesFacet,
@@ -10,25 +10,6 @@ import {
 import { ArrowUpRight, Search, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
-
-export type PeopleCandidateView = {
-  confidence: number;
-  contactRoute: { label: string; url: string } | null;
-  domains: string[];
-  eventTypes: string[];
-  facts: OperatorBriefFact[];
-  id: string;
-  identityWarning: string | null;
-  initials: string;
-  location: string;
-  name: string;
-  score: number;
-  slug: string;
-  sourceLabels: string[];
-  stage: string;
-  status: string;
-  thesis: string;
-};
 
 type SelectedFacets = {
   domains: string[];
@@ -91,7 +72,7 @@ export function PeopleSearch({
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [selected, setSelected] = useState<SelectedFacets>(EMPTY_FACETS);
   const [searching, setSearching] = useState(false);
-  const [remoteOrder, setRemoteOrder] = useState<string[] | null>(null);
+  const [remoteResults, setRemoteResults] = useState<PeopleCandidateView[] | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const facets = useMemo(() => buildSearchFacetOptions(candidates), [candidates]);
@@ -102,7 +83,7 @@ export function PeopleSearch({
 
   const results = useMemo(() => {
     const normalized = submittedQuery.trim().toLowerCase();
-    const filtered = candidates.filter((candidate) => {
+    const filtered = (remoteResults ?? candidates).filter((candidate) => {
       const haystack = [
         candidate.name,
         candidate.thesis,
@@ -114,7 +95,7 @@ export function PeopleSearch({
         .join(" ")
         .toLowerCase();
       const queryMatch =
-        !normalized || remoteOrder !== null ||
+        !normalized || remoteResults !== null ||
         normalized.split(/\s+/).every((term) => haystack.includes(term));
       const domainMatch =
         candidateMatchesFacet(candidate.domains, selected.domains);
@@ -126,12 +107,10 @@ export function PeopleSearch({
       return queryMatch && domainMatch && eventTypeMatch && locationMatch && sourceMatch && stageMatch && statusMatch;
     });
 
-    if (!remoteOrder) return filtered.sort((a, b) => b.score - a.score);
-    const rank = new Map(remoteOrder.map((slug, index) => [slug, index]));
-    return filtered
-      .filter((candidate) => rank.has(candidate.slug))
-      .sort((a, b) => (rank.get(a.slug) ?? 999) - (rank.get(b.slug) ?? 999));
-  }, [candidates, remoteOrder, selected, submittedQuery]);
+    return remoteResults === null
+      ? filtered.sort((a, b) => b.score - a.score)
+      : filtered;
+  }, [candidates, remoteResults, selected, submittedQuery]);
 
   function toggleValue(key: keyof SelectedFacets, value: string) {
     setSelected((current) => ({
@@ -146,7 +125,7 @@ export function PeopleSearch({
     event.preventDefault();
     setSubmittedQuery(query);
     setSearching(true);
-    setRemoteOrder(null);
+    setRemoteResults(null);
     setSearchError(null);
 
     try {
@@ -171,12 +150,12 @@ export function PeopleSearch({
         return;
       }
       const payload = (await response.json()) as {
-        results?: Array<{ candidate?: { slug?: string }; slug?: string }>;
+        results?: Array<{ view?: PeopleCandidateView }>;
       };
-      const slugs = payload.results
-        ?.map((result) => result.slug ?? result.candidate?.slug)
-        .filter((slug): slug is string => Boolean(slug));
-      if (slugs) setRemoteOrder(slugs);
+      const views = payload.results
+        ?.map((result) => result.view)
+        .filter((view): view is PeopleCandidateView => Boolean(view));
+      setRemoteResults(views ?? []);
     } catch {
       setSearchError("Search could not run. The visible filters still work on loaded records.");
     } finally {
