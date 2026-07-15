@@ -40,6 +40,7 @@ type RunOptions = {
   graphExpansion?: boolean;
   intelligenceRefreshLimit?: number;
   aiEventSummaryLimit?: number;
+  maxEnrichmentConnectorsPerPerson?: number;
   signal?: AbortSignal;
 };
 
@@ -403,6 +404,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       connectors: registry,
       settings: configuration.connectors,
       now: startedAt,
+      maxConnectorsPerPerson: options.maxEnrichmentConnectorsPerPerson,
       signal: options.signal,
     });
     const enrichedEvents = uniqueRunEvents(

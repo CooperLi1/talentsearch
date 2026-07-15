@@ -9,18 +9,28 @@ import { apiErrorResponse, assertCronRequest, getWorkspaceId } from "../../_lib/
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+// Leave 90 seconds for persistence and run-ledger completion before Vercel's
+// 300-second hard stop.
+const ENRICHMENT_DEADLINE_MS = 210_000;
+
 export async function GET(request: Request) {
   try {
     assertCronRequest(request);
     const workspaceId = getWorkspaceId();
     const configuration = await loadSourceConfiguration(workspaceId, false);
     const brave = configuration.connectors["brave-enrichment"];
+    const signal = AbortSignal.any([
+      request.signal,
+      AbortSignal.timeout(ENRICHMENT_DEADLINE_MS),
+    ]);
     const summary = await runDiscoveryBatch({
       repository: createTalentRadarDiscoveryRepository(),
       workspaceId,
       configuration: {
         ...configuration,
-        enrichTopCandidates: Math.min(3, configuration.enrichTopCandidates),
+        // One durable claim per shard means a slow profile cannot erase the
+        // completed work for two others when the function reaches its limit.
+        enrichTopCandidates: Math.min(1, configuration.enrichTopCandidates),
         connectors: {
           ...configuration.connectors,
           "brave-enrichment": brave
@@ -42,8 +52,12 @@ export async function GET(request: Request) {
       // Graph expansion has its own daily discovery budget. Repeating it in all
       // 48 research shards doubles the network work and exhausts the function.
       graphExpansion: false,
-      intelligenceRefreshLimit: 20,
-      signal: request.signal,
+      // Event prose and candidate briefs have separate workers. Keeping them
+      // out of enrichment leaves the network worker enough time to checkpoint.
+      aiEventSummaryLimit: 0,
+      intelligenceRefreshLimit: 0,
+      maxEnrichmentConnectorsPerPerson: 5,
+      signal,
     });
     return Response.json({ ok: true, summary });
   } catch (error) {

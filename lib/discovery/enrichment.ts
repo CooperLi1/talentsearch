@@ -83,6 +83,7 @@ export async function enrichPeople(input: {
   settings: Partial<Record<SourceKind, ConnectorSettings>>;
   now?: Date;
   concurrency?: number;
+  maxConnectorsPerPerson?: number;
   signal?: AbortSignal;
 }): Promise<{
   results: Array<{ person: PersonObservation; events: DiscoveryEvent[]; edges: GraphEdge[] }>;
@@ -90,6 +91,12 @@ export async function enrichPeople(input: {
 }> {
   const now = input.now ?? new Date();
   const warnings: string[] = [];
+  const requestedConnectorLimit = Number(
+    input.maxConnectorsPerPerson ?? MAX_CONNECTORS_PER_PERSON,
+  );
+  const maxConnectorsPerPerson = Number.isFinite(requestedConnectorLimit)
+    ? Math.min(MAX_CONNECTORS_PER_PERSON, Math.max(1, Math.floor(requestedConnectorLimit)))
+    : MAX_CONNECTORS_PER_PERSON;
   const results = await mapLimit(
     input.people,
     Math.min(8, Math.max(1, input.concurrency ?? 3)),
@@ -101,6 +108,7 @@ export async function enrichPeople(input: {
       const attempted = new Set<SourceKind>();
       const queued = new Set<SourceKind>();
       const queue: SourceKind[] = [];
+      const researchPass = Math.max(0, Math.floor(input.researchPasses?.[personIndex] ?? 0));
       const enqueue = (kind: SourceKind | null) => {
         if (
           !kind ||
@@ -136,8 +144,32 @@ export async function enrichPeople(input: {
       };
       enqueueKnownProviders();
 
-      while (queue.length && attempted.size < MAX_CONNECTORS_PER_PERSON) {
-        const kind = queue.shift()!;
+      // A bounded worker must not repeat the same first providers forever. Rotate
+      // the provider-native work by research pass while keeping public search at
+      // the back so it can use any stronger identity discovered first.
+      const braveQueued = queue.filter((kind) => kind === "brave-enrichment");
+      const nativeQueue = queue.filter((kind) => kind !== "brave-enrichment");
+      const rotation = nativeQueue.length ? researchPass % nativeQueue.length : 0;
+      queue.splice(
+        0,
+        queue.length,
+        ...nativeQueue.slice(rotation),
+        ...nativeQueue.slice(0, rotation),
+        ...braveQueued,
+      );
+
+      while (queue.length && attempted.size < maxConnectorsPerPerson) {
+        if (input.signal?.aborted) {
+          warnings.push(`Enrichment budget ended while researching ${person.displayName}`);
+          break;
+        }
+        // Public search is the cross-source bridge for every profile. Reserve
+        // the final bounded connector slot for it instead of allowing a long
+        // list of native identities to crowd it out.
+        const braveIndex = queue.indexOf("brave-enrichment");
+        const kind = attempted.size === maxConnectorsPerPerson - 1 && braveIndex >= 0
+          ? queue.splice(braveIndex, 1)[0]!
+          : queue.shift()!;
         queued.delete(kind);
         if (attempted.has(kind)) continue;
         attempted.add(kind);
@@ -167,6 +199,7 @@ export async function enrichPeople(input: {
           warnings.push(
             `${connector.displayName} enrichment failed for ${person.displayName}: ${error instanceof Error ? error.message : "unknown error"}`,
           );
+          if (input.signal?.aborted) break;
         }
       }
       return { person: enrichedPerson, events: deduplicateEvents(events), edges };

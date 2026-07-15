@@ -10,6 +10,7 @@ import {
 import { ownedWorkProfileFromHtml } from "../lib/discovery/connectors/web-presence";
 import { crossProfileClaimForUrl } from "../lib/discovery/cross-profile-links";
 import type {
+  ConnectorSettings,
   DiscoveryConnector,
   DiscoveryEvent,
   PersonObservation,
@@ -29,6 +30,31 @@ function event(source: SourceKind, person: PersonObservation): DiscoveryEvent {
     sourceUrl: person.sourceUrl,
     title: `${source} profile`,
     type: "profile_observed",
+  };
+}
+
+function connector(
+  kind: SourceKind,
+  enrich: DiscoveryConnector["enrich"],
+): DiscoveryConnector {
+  return {
+    displayName: kind,
+    discover: async () => ({ events: [] }),
+    enrich,
+    kind,
+  };
+}
+
+function identity(provider: SourceKind, externalId: string) {
+  return { provider, externalId, verified: true };
+}
+
+function observation(overrides: Partial<PersonObservation> = {}): PersonObservation {
+  return {
+    displayName: "Ada Example",
+    identities: [identity("github", "ada")],
+    sourceUrl: "https://example.com/ada",
+    ...overrides,
   };
 }
 
@@ -173,6 +199,94 @@ test("public web enrichment receives prior evidence and newly observed provider 
     name: "robot-arm",
     url: "https://github.com/ada/robot-arm",
   }]);
+});
+
+test("bounded enrichment rotates native providers and reserves a slot for public search", async () => {
+  const calls: SourceKind[] = [];
+  const person = observation({
+    identities: [
+      identity("github", "person-1"),
+      identity("semantic-scholar", "person-2"),
+    ],
+  });
+  const connectors = new Map<SourceKind, DiscoveryConnector>([
+    ["github", connector("github", async () => {
+      calls.push("github");
+      return { events: [] };
+    })],
+    ["semantic-scholar", connector("semantic-scholar", async () => {
+      calls.push("semantic-scholar");
+      return { events: [] };
+    })],
+    ["brave-enrichment", connector("brave-enrichment", async () => {
+      calls.push("brave-enrichment");
+      return { events: [] };
+    })],
+  ]);
+  const settings = {
+    github: { enabled: true },
+    "semantic-scholar": { enabled: true },
+    "brave-enrichment": { enabled: true },
+  } satisfies Partial<Record<SourceKind, ConnectorSettings>>;
+
+  await enrichPeople({
+    people: [person],
+    researchPasses: [0],
+    connectors,
+    settings,
+    maxConnectorsPerPerson: 2,
+  });
+  assert.deepEqual(calls, ["github", "brave-enrichment"]);
+
+  calls.length = 0;
+  await enrichPeople({
+    people: [person],
+    researchPasses: [1],
+    connectors,
+    settings,
+    maxConnectorsPerPerson: 2,
+  });
+  assert.deepEqual(calls, ["semantic-scholar", "brave-enrichment"]);
+});
+
+test("enrichment stops scheduling connectors after its worker signal aborts", async () => {
+  const controller = new AbortController();
+  const calls: SourceKind[] = [];
+  const person = observation({
+    identities: [
+      identity("github", "person-1"),
+      identity("semantic-scholar", "person-2"),
+    ],
+  });
+  const connectors = new Map<SourceKind, DiscoveryConnector>([
+    ["github", connector("github", async () => {
+      calls.push("github");
+      controller.abort();
+      return { events: [] };
+    })],
+    ["semantic-scholar", connector("semantic-scholar", async () => {
+      calls.push("semantic-scholar");
+      return { events: [] };
+    })],
+    ["brave-enrichment", connector("brave-enrichment", async () => {
+      calls.push("brave-enrichment");
+      return { events: [] };
+    })],
+  ]);
+
+  const result = await enrichPeople({
+    people: [person],
+    connectors,
+    settings: {
+      github: { enabled: true },
+      "semantic-scholar": { enabled: true },
+      "brave-enrichment": { enabled: true },
+    },
+    signal: controller.signal,
+  });
+
+  assert.deepEqual(calls, ["github"]);
+  assert.match(result.warnings.join("\n"), /budget ended/i);
 });
 
 test("deep research rotates bounded query plans while retaining LinkedIn lookup", () => {
