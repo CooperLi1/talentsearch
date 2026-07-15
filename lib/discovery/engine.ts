@@ -304,6 +304,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
   const updatedCandidateIds = new Set<string>();
   const reviewedCandidateIds = new Set<string>();
   const enrichedCandidateIds = new Set<string>();
+  let enrichmentCandidatesClaimed = 0;
   let eventsObserved = 0;
   let eventsInserted = 0;
 
@@ -397,6 +398,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       options.workspaceId,
       configuration.enrichTopCandidates,
     );
+    enrichmentCandidatesClaimed = enrichmentTargets.length;
     const enrichment = await enrichPeople({
       people: enrichmentTargets.map((target) => target.person),
       evidenceEvents: enrichmentTargets.map((target) => target.events),
@@ -627,6 +629,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       candidatesCreated: createdCandidateIds.size,
       candidatesUpdated: updatedCandidateIds.size,
       identitiesFlaggedForReview: reviewedCandidateIds.size,
+      enrichmentCandidatesClaimed,
       enrichedCandidates: enrichedCandidateIds.size,
     };
     await options.repository.finishRun({
@@ -652,6 +655,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       candidatesCreated: createdCandidateIds.size,
       candidatesUpdated: updatedCandidateIds.size,
       identitiesFlaggedForReview: reviewedCandidateIds.size,
+      enrichmentCandidatesClaimed,
       enrichedCandidates: enrichedCandidateIds.size,
     };
     await options.repository.finishRun({

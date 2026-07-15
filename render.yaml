@@ -1,0 +1,49 @@
+services:
+  - type: worker
+    name: talentsearch-enrichment
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run worker:enrichment
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: UNFOUND_WORKSPACE_ID
+        value: "1"
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITLAB_TOKEN
+        sync: false
+      - key: SEMANTIC_SCHOLAR_API_KEY
+        sync: false
+      - key: OPENALEX_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        value: gpt-4o-mini
+      - key: AI_SUMMARY_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: WORKER_ENRICHMENT_CONCURRENCY
+        value: "2"
+      - key: WORKER_CONNECTORS_PER_PASS
+        value: "8"
+      - key: WORKER_POLL_MS
+        value: "5000"
+      - key: WORKER_EMPTY_POLL_MS
+        value: "60000"
+      - key: WORKER_CANDIDATE_TIMEOUT_MS
+        value: "240000"
+      - key: WORKER_ENABLE_BRIEFS
+        value: "true"
+      - key: WORKER_BRIEF_INTERVAL_MS
+        value: "60000"
+      - key: WORKER_BRIEF_BATCH_LIMIT
+        value: "6"

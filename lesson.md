@@ -168,6 +168,10 @@ A frequent enrichment shard should claim a small research batch and return. If i
 
 A function timeout kills the process before application-level catch or finally logic can close a run row. On each new invocation, atomically fail running ledger entries older than the platform budget and let expired candidate claims rotate normally. Otherwise schedules can be firing while the operator sees an ever-growing set of phantom running jobs.
 
+## Shadow durable workers before scheduler cutover
+
+A new process worker should consume the same atomic, lease-backed claims as the serverless worker before the old scheduler is disabled. Short overlap proves credentials, network access, shutdown behavior, and real database progress without duplicate ownership. Make the worker deadline shorter than its claim lease, verify several durable completions, then disable the legacy claim path with an explicit production flag rather than relying on deployment timing.
+
 ## Identity bridges must route to a real enrichment connector
 
 Persisting a safe cross-index identity is not enough if the enrichment scheduler assumes every identity provider is also a connector name. Map bridge identities, such as DOI plus author position, to the provider that can resolve them and test that the connector is actually invoked. Measure inserted corroborating evidence, not merely the presence of the bridge row.

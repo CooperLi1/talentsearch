@@ -200,6 +200,36 @@ The dedicated brief worker claims candidates atomically with a five-minute lease
 
 Vercel cron runs only on production deployments. Hobby permits 100 jobs but requires every individual expression to run at most once per day, with up to 59 minutes of timing jitter. `vercel.json` uses all 100 slots: 48 enrichment shards, 27 brief shards, 24 hourly delivery dispatchers, and one discovery run. The delivery route accepts Vercel's jitter for up to two hours while retaining the exact configured send time in the digest key; database claims keep delayed duplicate invocations idempotent. During local development, keep `next dev` running and start `npm run workers:local` in a second terminal. The local runner calls only localhost by default, runs delivery every 15 minutes, enrichment every five minutes, briefs every ten minutes, and discovery daily. It prevents overlapping invocations of the same job and never logs the cron secret. Use `npm run workers:once` for a single full pass when testing, or append `-- --job=weekly-digest`, `-- --job=enrichment`, `-- --job=briefs`, or `-- --job=discovery` to run one worker only. Local digest calls send the same schedule header as production so a late invocation receives the same bounded catch-up window.
 
+## Continuous research worker
+
+`render.yaml` defines a Render background worker that imports the discovery engine directly. It does not call the Vercel application, so candidate research is not constrained by a Route Handler duration or cron frequency. Two independent lanes claim one candidate at a time through Supabase, run up to eight rotating source connectors, checkpoint the pass, and immediately claim more work. A separate lane drains grounded candidate briefs so research does not outrun operator-ready summaries.
+
+The worker remains bounded even though it is continuous:
+
+- Supabase claims use `FOR UPDATE SKIP LOCKED`, so Render and Vercel can overlap safely during cutover.
+- Each candidate pass ends after four minutes, before the six-minute database lease can expire.
+- Per-origin process-wide request gates preserve connector and publisher rate limits across concurrent candidates.
+- Empty queues poll once per minute; failures use exponential backoff up to five minutes.
+- `SIGTERM` stops new claims and gives active passes time to finish within Render's configured five-minute shutdown window.
+
+### Render setup
+
+1. Push the repository revision containing `render.yaml` to the Git provider connected to Render.
+2. In Render, choose **New → Blueprint**, select the repository and production branch, and apply the detected Blueprint.
+3. Enter the prompted server-only values. Copy the existing production values for `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `BRAVE_SEARCH_API_KEY`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `SEMANTIC_SCHOLAR_API_KEY`, `OPENALEX_API_KEY`, and `OPENAI_API_KEY`. Do not expose any of them through a `NEXT_PUBLIC_` variable.
+4. Confirm `UNFOUND_WORKSPACE_ID` matches the Vercel project. It defaults to `1` in the Blueprint.
+5. Deploy and watch the worker logs. A healthy start emits `worker.started`; completed claims emit `enrichment.completed` with `claimed: 1`; model work emits `briefs.completed`.
+6. Let Render and the Vercel fallback overlap until at least three candidate claims and one brief batch succeed. The shared database leases prevent duplicate claims.
+7. Set `EXTERNAL_WORKER_ACTIVE=true` in the Vercel production environment and redeploy. The legacy enrichment and brief cron routes will then acknowledge invocations without claiming work. Discovery and digest delivery remain on Vercel.
+
+Run a single direct pass locally with production-like credentials before the first deploy:
+
+```bash
+npm run worker:enrichment:once
+```
+
+The process logs run IDs and aggregate counts but never credentials, candidate contact data, or provider response bodies. To raise throughput, increase `WORKER_ENRICHMENT_CONCURRENCY` one step at a time and monitor provider 429s, inserted evidence per claim, and oldest due-candidate age. Do not raise `WORKER_CANDIDATE_TIMEOUT_MS` above the claim lease.
+
 ### Local cron check
 
 Scheduled delivery is not simulated by `next dev`; call the Route Handler directly:

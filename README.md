@@ -6,7 +6,7 @@ The operating question is simple: who became more interesting this week, and wha
 
 ## What is included
 
-- Scheduled discovery across source connectors with bounded retries, provenance, and deduplication
+- Scheduled discovery plus a continuous, lease-backed research worker with bounded retries, provenance, and deduplication
 - Candidate dossiers that preserve raw evidence, normalized events, identity confidence, and graph relationships
 - Explainable scoring across achievement quality, trajectory velocity, originality, trusted-network proximity, evidence diversity, and earlyness
 - Supabase Postgres plus `pgvector` for durable storage, hybrid retrieval, and similarity search

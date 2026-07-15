@@ -1,8 +1,4 @@
-import {
-  createTalentRadarDiscoveryRepository,
-  loadSourceConfiguration,
-} from "@/lib/discovery/adapters/talent-radar";
-import { runDiscoveryBatch } from "@/lib/discovery/engine";
+import { runEnrichmentShard } from "@/lib/discovery/enrichment-runner";
 
 import { apiErrorResponse, assertCronRequest, getWorkspaceId } from "../../_lib/http";
 
@@ -16,47 +12,18 @@ const ENRICHMENT_DEADLINE_MS = 210_000;
 export async function GET(request: Request) {
   try {
     assertCronRequest(request);
+    if (process.env.EXTERNAL_WORKER_ACTIVE === "true") {
+      return Response.json({ ok: true, skipped: "external-worker-active" });
+    }
     const workspaceId = getWorkspaceId();
-    const configuration = await loadSourceConfiguration(workspaceId, false);
-    const brave = configuration.connectors["brave-enrichment"];
     const signal = AbortSignal.any([
       request.signal,
       AbortSignal.timeout(ENRICHMENT_DEADLINE_MS),
     ]);
-    const summary = await runDiscoveryBatch({
-      repository: createTalentRadarDiscoveryRepository(),
+    const summary = await runEnrichmentShard({
       workspaceId,
-      configuration: {
-        ...configuration,
-        // One durable claim per shard means a slow profile cannot erase the
-        // completed work for two others when the function reaches its limit.
-        enrichTopCandidates: Math.min(1, configuration.enrichTopCandidates),
-        connectors: {
-          ...configuration.connectors,
-          "brave-enrichment": brave
-            ? {
-                ...brave,
-                options: {
-                  ...brave.options,
-                  maxQueries: Math.min(3, Number(brave.options?.maxQueries ?? 3)),
-                  maxResults: Math.min(5, Number(brave.options?.maxResults ?? 5)),
-                },
-              }
-            : brave,
-        },
-      },
-      // Discovery is intentionally empty. This worker rotates through existing
-      // candidates and follows provider profiles, owned sites, and public search.
-      sourceKinds: [],
-      boundedEventLimit: 1,
-      // Graph expansion has its own daily discovery budget. Repeating it in all
-      // 48 research shards doubles the network work and exhausts the function.
-      graphExpansion: false,
-      // Event prose and candidate briefs have separate workers. Keeping them
-      // out of enrichment leaves the network worker enough time to checkpoint.
-      aiEventSummaryLimit: 0,
-      intelligenceRefreshLimit: 0,
-      maxEnrichmentConnectorsPerPerson: 5,
+      candidateLimit: 1,
+      connectorLimit: 5,
       signal,
     });
     return Response.json({ ok: true, summary });

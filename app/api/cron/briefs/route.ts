@@ -9,6 +9,9 @@ export const maxDuration = 300;
 export async function GET(request: Request) {
   try {
     assertCronRequest(request);
+    if (process.env.EXTERNAL_WORKER_ACTIVE === "true") {
+      return Response.json({ ok: true, skipped: "external-worker-active" });
+    }
     const workspaceId = getWorkspaceId();
     const configuration = await loadSourceConfiguration(workspaceId, false);
     const requestedLimit = Number(

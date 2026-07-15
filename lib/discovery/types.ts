@@ -219,5 +219,6 @@ export type DiscoveryRunSummary = {
   candidatesCreated: number;
   candidatesUpdated: number;
   identitiesFlaggedForReview: number;
+  enrichmentCandidatesClaimed: number;
   enrichedCandidates: number;
 };
