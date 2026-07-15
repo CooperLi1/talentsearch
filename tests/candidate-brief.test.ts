@@ -128,6 +128,15 @@ test("candidate-owned role and research evidence leads the 20-second brief conte
   assert.equal(isCandidateIntroductionEvidence(personalSite), true);
   assert.equal(isCandidateIntroductionEvidence(repository), false);
   assert.equal(selectDiverseBriefEvidence([repository, personalSite], 2)[0], personalSite);
+
+  const indexedPaper: DiscoveryEvent = {
+    ...personalSite,
+    source: "semantic-scholar",
+    type: "paper_published",
+    description: "Research on database systems and distributed computing.",
+    tags: undefined,
+  };
+  assert.equal(isCandidateIntroductionEvidence(indexedPaper), false);
 });
 
 test("operator brief schema supports a five-fact target", () => {

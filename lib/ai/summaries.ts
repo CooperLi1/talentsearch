@@ -62,7 +62,7 @@ export function isCandidateIntroductionEvidence(event: DiscoveryEvent) {
     "semantic-scholar",
     "openalex",
     "orcid",
-  ].includes(event.source);
+  ].includes(event.source) && ["profile_observed", "other"].includes(event.type);
   return event.confidence >= 0.75 &&
     Boolean(candidateOwned || profileLikePublisher) &&
     INTRODUCTION_SIGNAL.test(`${event.title} ${event.description ?? ""}`);
@@ -128,14 +128,18 @@ export function attachEquivalentPublisherCitations(
   events: DiscoveryEvent[],
 ) {
   const evidenceIds = events.map((_event, index) => `E${index + 1}`);
-  const byAuthorship = new Map<string, number[]>();
+  const workKey = (event: DiscoveryEvent) => {
+    const quoted = event.title.match(/[“\"]([^”\"]+)[”\"]\s*$/)?.[1] ?? event.title;
+    return quoted.toLocaleLowerCase("en-US").normalize("NFKC").replace(/[^a-z0-9]+/g, " ").trim();
+  };
+  const byWork = new Map<string, number[]>();
   events.forEach((event, index) => {
-    for (const identity of event.person.identities) {
-      if (identity.provider !== "doi-authorship" || identity.verified !== true) continue;
-      const indexes = byAuthorship.get(identity.externalId) ?? [];
-      indexes.push(index);
-      byAuthorship.set(identity.externalId, indexes);
-    }
+    if (!["semantic-scholar", "crossref", "openalex"].includes(event.source)) return;
+    const key = workKey(event);
+    if (!key) return;
+    const indexes = byWork.get(key) ?? [];
+    indexes.push(index);
+    byWork.set(key, indexes);
   });
   return facts.map((fact) => {
     const sourceIndexes = fact.sourceIds.flatMap((sourceId) => {
@@ -145,16 +149,12 @@ export function attachEquivalentPublisherCitations(
     const publishers = new Set(sourceIndexes.map((index) => evidenceGroup(events[index])));
     const additions: string[] = [];
     for (const sourceIndex of sourceIndexes) {
-      for (const identity of events[sourceIndex].person.identities) {
-        if (identity.provider !== "doi-authorship" || identity.verified !== true) continue;
-        const corroboratingIndex = (byAuthorship.get(identity.externalId) ?? []).find(
-          (index) => !publishers.has(evidenceGroup(events[index])),
-        );
-        if (corroboratingIndex === undefined) continue;
-        additions.push(evidenceIds[corroboratingIndex]);
-        publishers.add(evidenceGroup(events[corroboratingIndex]));
-        break;
-      }
+      const corroboratingIndex = (byWork.get(workKey(events[sourceIndex])) ?? []).find(
+        (index) => !publishers.has(evidenceGroup(events[index])),
+      );
+      if (corroboratingIndex === undefined) continue;
+      additions.push(evidenceIds[corroboratingIndex]);
+      publishers.add(evidenceGroup(events[corroboratingIndex]));
       if (additions.length) break;
     }
     return additions.length
@@ -486,6 +486,7 @@ The operatorFacts field is the operator-facing brief. Target 5 distinct facts. R
 - Do not use "available on GitHub," a creation date, being recent, or generic claims about improving, advancing, enhancing, showcasing, or addressing a need as standalone facts.
 - Synthesize across different publishers when the evidence allows it. Do not spend all bullets on several items from one platform when another source adds useful context.
 - When PUBLIC EVIDENCE EVENTS contain two or more publisher values, the completed facts must cite at least two different publisher values.
+- When two evidence records have the same work title but different publisher values, cite both IDs on a fact about that work instead of repeating the achievement.
 - Give every fact one or two sourceIds copied exactly from PUBLIC EVIDENCE EVENTS, such as E1. Do not include a fact unless its claim is supported by those evidence IDs.
 
 PERSON OBSERVATION:
@@ -533,6 +534,7 @@ Rules:
 - Target 5 distinct facts. Return fewer only if another fact would be filler or unsupported.
 - Do not put evidence IDs in the text.
 - When the evidence includes two or more publisher values, cite at least two different publisher values across the completed facts.
+- When two evidence records have the same work title but different publisher values, cite both IDs on a fact about that work.
 
 FIRST DRAFT:
 ${JSON.stringify(output.operatorFacts)}

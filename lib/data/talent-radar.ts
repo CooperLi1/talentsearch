@@ -2227,6 +2227,25 @@ export async function listDigestCandidateSnapshots(
   );
 }
 
+export async function getOldestReadyDigest(
+  workspace: string | number,
+  dueAt = new Date().toISOString(),
+): Promise<DigestRecord | null> {
+  const parsedDueAt = new Date(dueAt);
+  if (!Number.isFinite(parsedDueAt.getTime())) throw new Error("Digest due time is invalid");
+  const { data, error } = await db()
+    .from("digests")
+    .select("*")
+    .eq("workspace_id", workspaceId(workspace))
+    .eq("status", "ready")
+    .lte("scheduled_for", parsedDueAt.toISOString())
+    .order("scheduled_for", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  fail(error);
+  return data ? mapDigest(data as DigestRow) : null;
+}
+
 export async function claimDigestDelivery(
   id: string | number,
   workspace: string | number,

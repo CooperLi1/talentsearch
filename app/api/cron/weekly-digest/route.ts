@@ -3,6 +3,7 @@ import {
   createDigest,
   getActiveCriterionProfile,
   getCandidateBySlug,
+  getOldestReadyDigest,
   listDigestCandidateSnapshots,
   listDigestSubscribers,
   rankCandidatesForDigest,
@@ -95,13 +96,107 @@ function dossierUrl(slug: string) {
   }
 }
 
-export async function GET(request: Request) {
+async function deliverDigestRecord(digest: DigestRecord, workspaceId: string) {
   let claimedDigest: DigestRecord | null = null;
   let deliveryFinalized = false;
+  try {
+    const candidateSnapshots = await listDigestCandidateSnapshots(digest.id, workspaceId);
+    if (candidateSnapshots.length !== digest.candidateCount) {
+      throw new Error("Digest candidate snapshot is incomplete");
+    }
+    const deliveryCandidates = candidateSnapshots.map(parseDigestCandidateSnapshot);
+    const claim = await claimDigestDelivery(
+      digest.id,
+      workspaceId,
+      DIGEST_CLAIM_STALE_MINUTES,
+      DIGEST_RETRY_WINDOW_MINUTES,
+    );
+    if (!claim) throw new Error("Digest disappeared before delivery could be claimed");
+    if (!claim.claimed) {
+      return Response.json({
+        ok: true,
+        skipped: true,
+        reason: skipReason(claim.digest),
+        digestId: claim.digest.id,
+        status: claim.digest.status,
+      });
+    }
+    claimedDigest = claim.digest;
 
+    const subscribers = await listDigestSubscribers(workspaceId);
+    const activeSubscribers = subscribers.filter((subscriber) => subscriber.status === "active");
+    const delivery = await sendWeeklyDigest({
+      digestId: claimedDigest.id,
+      idempotencyKey: claimedDigest.dedupeKey,
+      periodStart: claimedDigest.periodStart,
+      periodEnd: claimedDigest.periodEnd,
+      subject: claimedDigest.subject,
+      recipients: activeSubscribers.map((subscriber) => ({
+        email: subscriber.email,
+        name: subscriber.displayName ?? undefined,
+      })),
+      candidates: deliveryCandidates,
+      dashboardUrl: process.env.NEXT_PUBLIC_APP_URL,
+    });
+    const sentAt = delivery.status === "sent" ? new Date().toISOString() : null;
+    const finalizedDigest = await updateDigestDelivery(claimedDigest.id, workspaceId, {
+      status: delivery.status === "sent" ? "sent" : delivery.status === "failed" ? "failed" : "ready",
+      recipientCount: delivery.recipientCount,
+      sentAt,
+      providerMessageId: delivery.status === "sent" ? delivery.batches[0]?.emailIds[0] ?? null : null,
+      deliveryMetadata: JSON.parse(JSON.stringify(delivery)),
+    });
+    if (!finalizedDigest) throw new Error("Digest delivery state changed before completion");
+    deliveryFinalized = true;
+
+    if (sentAt) {
+      await updateSubscriberDeliveries(
+        workspaceId,
+        activeSubscribers.map((subscriber) => ({
+          subscriberId: subscriber.id,
+          deliveryStatus: "delivered",
+          lastSentAt: sentAt,
+        })),
+      );
+    }
+    console.info("[weekly-digest] delivery finalized", {
+      digestId: claimedDigest.id,
+      status: delivery.status,
+      candidateCount: deliveryCandidates.length,
+      recipientCount: delivery.recipientCount,
+    });
+    return Response.json({ ok: true, digestId: claimedDigest.id, delivery });
+  } catch (error) {
+    if (claimedDigest && !deliveryFinalized) {
+      try {
+        await updateDigestDelivery(claimedDigest.id, claimedDigest.workspaceId, {
+          status: "failed",
+          sentAt: null,
+          deliveryMetadata: { status: "failed", reason: "unhandled-route-error" },
+        });
+      } catch (stateError) {
+        console.error("Failed to release weekly digest claim", {
+          digestId: claimedDigest.id,
+          errorName: stateError instanceof Error ? stateError.name : "unknown",
+        });
+      }
+    }
+    throw error;
+  }
+}
+
+export async function GET(request: Request) {
   try {
     assertCronRequest(request);
     const workspaceId = getWorkspaceId();
+    const overdueDigest = await getOldestReadyDigest(workspaceId);
+    if (overdueDigest) {
+      console.info("[weekly-digest] reclaiming overdue prepared digest", {
+        digestId: overdueDigest.id,
+        scheduledFor: overdueDigest.scheduledFor,
+      });
+      return deliverDigestRecord(overdueDigest, workspaceId);
+    }
     const criterion = await getActiveCriterionProfile(workspaceId);
     const schedule = digestScheduleWindow(
       new Date(),
@@ -192,86 +287,8 @@ export async function GET(request: Request) {
         scheduledFor: periodEnd,
       });
     }
-    const deliveryCandidates = candidateSnapshots.map(parseDigestCandidateSnapshot);
-    const claim = await claimDigestDelivery(
-      digest.id,
-      workspaceId,
-      DIGEST_CLAIM_STALE_MINUTES,
-      DIGEST_RETRY_WINDOW_MINUTES,
-    );
-    if (!claim) throw new Error("Digest disappeared before delivery could be claimed");
-    if (!claim.claimed) {
-      return Response.json({
-        ok: true,
-        skipped: true,
-        reason: skipReason(claim.digest),
-        digestId: claim.digest.id,
-        status: claim.digest.status,
-      });
-    }
-    claimedDigest = claim.digest;
-
-    const subscribers = await listDigestSubscribers(workspaceId);
-    const activeSubscribers = subscribers.filter((subscriber) => subscriber.status === "active");
-    const delivery = await sendWeeklyDigest({
-      digestId: claimedDigest.id,
-      idempotencyKey: claimedDigest.dedupeKey,
-      periodStart: claimedDigest.periodStart,
-      periodEnd: claimedDigest.periodEnd,
-      subject: claimedDigest.subject,
-      recipients: activeSubscribers.map((subscriber) => ({ email: subscriber.email, name: subscriber.displayName ?? undefined })),
-      candidates: deliveryCandidates,
-      dashboardUrl: process.env.NEXT_PUBLIC_APP_URL,
-    });
-    const sentAt = delivery.status === "sent" ? new Date().toISOString() : null;
-    const finalizedDigest = await updateDigestDelivery(claimedDigest.id, workspaceId, {
-      status: delivery.status === "sent" ? "sent" : delivery.status === "failed" ? "failed" : "ready",
-      recipientCount: delivery.recipientCount,
-      sentAt,
-      providerMessageId: delivery.status === "sent" ? delivery.batches[0]?.emailIds[0] ?? null : null,
-      deliveryMetadata: JSON.parse(JSON.stringify(delivery)),
-    });
-    if (!finalizedDigest) throw new Error("Digest delivery state changed before completion");
-    deliveryFinalized = true;
-
-    if (sentAt) {
-      await updateSubscriberDeliveries(
-        workspaceId,
-        activeSubscribers.map((subscriber) => ({ subscriberId: subscriber.id, deliveryStatus: "delivered", lastSentAt: sentAt })),
-      );
-    }
-    console.info("[weekly-digest] delivery finalized", {
-      digestId: claimedDigest.id,
-      status: delivery.status,
-      candidateCount: deliveryCandidates.length,
-      recipientCount: delivery.recipientCount,
-    });
-    return Response.json({ ok: true, digestId: claimedDigest.id, delivery });
+    return deliverDigestRecord(digest, workspaceId);
   } catch (error) {
-    if (claimedDigest && !deliveryFinalized) {
-      try {
-        await updateDigestDelivery(claimedDigest.id, claimedDigest.workspaceId, {
-          status: "failed",
-          sentAt: null,
-          deliveryMetadata: {
-            status: "failed",
-            reason: "unhandled-route-error",
-          },
-        });
-      } catch (stateError) {
-        console.error("Failed to release weekly digest claim", {
-          digestId: claimedDigest.id,
-          errorName: stateError instanceof Error ? stateError.name : "unknown",
-        });
-      }
-    }
-    if (claimedDigest) {
-      console.error("Weekly digest route failed", {
-        digestId: claimedDigest.id,
-        errorName: error instanceof Error ? error.name : "unknown",
-      });
-      return Response.json({ error: "Internal server error" }, { status: 500 });
-    }
     return apiErrorResponse(error);
   }
 }

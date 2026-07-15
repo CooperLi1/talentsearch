@@ -5,6 +5,7 @@ const configuredPassword = process.env.DASHBOARD_PASSWORD?.trim();
 if (!configuredPassword) throw new Error("DASHBOARD_PASSWORD is required");
 const password: string = configuredPassword;
 const absentSourceId = 2_147_483_647;
+const expectedQueueMinimum = Number(process.env.EXPECTED_QUEUE_MINIMUM ?? 0);
 
 async function main() {
   const unauthorized = await fetch(`${baseUrl}/api/sources`, {
@@ -76,12 +77,20 @@ async function main() {
   assert.equal(home.status, 200, "dashboard should render even before schema setup");
   const html = await home.text();
   assert.match(html, /Candidate queue|Setup required/u);
+  const queueCount = Number(html.match(/(\d+) people/u)?.[1] ?? 0);
+  if (Number.isFinite(expectedQueueMinimum) && expectedQueueMinimum > 0) {
+    assert.ok(
+      queueCount >= expectedQueueMinimum,
+      `candidate queue contains ${queueCount}; expected at least ${expectedQueueMinimum}`,
+    );
+  }
 
   console.log(
     JSON.stringify({
       auth: "passed",
       csrf: "passed",
       dashboard: "passed",
+      queueCount,
       rateLimit: "passed",
       sourceMutation: schemaReadiness.status,
     }),
