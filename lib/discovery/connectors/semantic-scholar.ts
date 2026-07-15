@@ -111,9 +111,16 @@ export function semanticScholarAuthorPerson(
   };
 }
 
-function paperEvents(paper: SemanticPaper, now: Date): DiscoveryEvent[] {
+export function semanticScholarPaperEvents(
+  paper: SemanticPaper,
+  now: Date,
+  targetAuthorId?: string,
+): DiscoveryEvent[] {
   const sourceUrl = paper.url || `https://www.semanticscholar.org/paper/${paper.paperId}`;
-  return (paper.authors ?? []).slice(0, 20).map((author, index) => {
+  return (paper.authors ?? []).slice(0, 20).flatMap((author, index) => {
+    // Author-specific enrichment must not emit coauthors as observations for
+    // the person being enriched. Coauthors belong in discovery and graph edges.
+    if (targetAuthorId && author.authorId !== targetAuthorId) return [];
     const authorship = doiAuthorshipIdentity(paper.externalIds?.DOI, index);
     const person = semanticScholarAuthorPerson(
       author,
@@ -121,7 +128,7 @@ function paperEvents(paper: SemanticPaper, now: Date): DiscoveryEvent[] {
       `${paper.paperId}#author-${index}`,
       authorship ? [authorship] : [],
     );
-    return createDiscoveryEvent({
+    return [createDiscoveryEvent({
       source: "semantic-scholar",
       sourceExternalId: `${paper.paperId}:${author.authorId ?? index}`,
       type: "paper_published",
@@ -137,7 +144,7 @@ function paperEvents(paper: SemanticPaper, now: Date): DiscoveryEvent[] {
       tags: paper.fieldsOfStudy,
       confidence: author.authorId ? 0.95 : 0.65,
       now,
-    });
+    })];
   });
 }
 
@@ -185,7 +192,9 @@ export class SemanticScholarConnector implements DiscoveryConnector {
           signal: context.signal,
           rateLimitPerSecond: process.env.SEMANTIC_SCHOLAR_API_KEY ? 1 : 0.2,
         });
-        for (const paper of response.data ?? []) events.push(...paperEvents(paper, context.now));
+        for (const paper of response.data ?? []) {
+          events.push(...semanticScholarPaperEvents(paper, context.now));
+        }
       } catch (error) {
         warnings.push(
           `Semantic Scholar query failed: ${error instanceof Error ? error.message : "unknown error"}`,
@@ -256,7 +265,11 @@ export class SemanticScholarConnector implements DiscoveryConnector {
           timeoutMs: 8_000,
         },
       );
-      events.push(...(papers.data ?? []).flatMap((paper) => paperEvents(paper, context.now)));
+      events.push(
+        ...(papers.data ?? []).flatMap((paper) =>
+          semanticScholarPaperEvents(paper, context.now, identity.externalId),
+        ),
+      );
     } catch (error) {
       warnings.push(`Author paper lookup failed: ${error instanceof Error ? error.message : "unknown error"}`);
     }

@@ -107,11 +107,28 @@ function workUrl(work: OpenAlexWork) {
   return work.primary_location?.landing_page_url || work.doi || work.id;
 }
 
-function workEvents(work: OpenAlexWork, now: Date): DiscoveryEvent[] {
+function normalizedOpenAlexAuthorId(value: string) {
+  return value.replace(/^https:\/\/openalex\.org\//, "").toLocaleUpperCase("en-US");
+}
+
+export function openAlexWorkEvents(
+  work: OpenAlexWork,
+  now: Date,
+  targetAuthorId?: string,
+): DiscoveryEvent[] {
   const sourceUrl = workUrl(work);
   const topics = work.topics?.slice(0, 8).map((topic) => topic.display_name) ?? [];
-  return (work.authorships ?? []).slice(0, 20).map((authorship, authorIndex) =>
-    createDiscoveryEvent({
+  const normalizedTarget = targetAuthorId
+    ? normalizedOpenAlexAuthorId(targetAuthorId)
+    : undefined;
+  return (work.authorships ?? []).slice(0, 20).flatMap((authorship, authorIndex) => {
+    // The works endpoint returns full author lists. During enrichment, only
+    // the requested OpenAlex author is evidence for the current candidate.
+    if (
+      normalizedTarget &&
+      normalizedOpenAlexAuthorId(authorship.author.id) !== normalizedTarget
+    ) return [];
+    return [createDiscoveryEvent({
       source: "openalex",
       sourceExternalId: `${work.id}:${authorship.author.id}`,
       type: "paper_published",
@@ -124,8 +141,8 @@ function workEvents(work: OpenAlexWork, now: Date): DiscoveryEvent[] {
       tags: topics,
       confidence: authorship.author.id ? 0.96 : 0.7,
       now,
-    }),
-  );
+    })];
+  });
 }
 
 export class OpenAlexConnector implements DiscoveryConnector {
@@ -161,7 +178,9 @@ export class OpenAlexConnector implements DiscoveryConnector {
           signal: context.signal,
           rateLimitPerSecond: 4,
         });
-        for (const work of response.results ?? []) events.push(...workEvents(work, context.now));
+        for (const work of response.results ?? []) {
+          events.push(...openAlexWorkEvents(work, context.now));
+        }
       } catch (error) {
         warnings.push(
           `OpenAlex query failed: ${error instanceof Error ? error.message : "unknown error"}`,
@@ -209,7 +228,11 @@ export class OpenAlexConnector implements DiscoveryConnector {
       retries: 1,
       timeoutMs: 8_000,
     });
-    return { events: (response.results ?? []).flatMap((work) => workEvents(work, context.now)) };
+    return {
+      events: (response.results ?? []).flatMap((work) =>
+        openAlexWorkEvents(work, context.now, authorId),
+      ),
+    };
   }
 
   async expandGraph(context: ConnectorEnrichmentContext): Promise<GraphEdge[]> {

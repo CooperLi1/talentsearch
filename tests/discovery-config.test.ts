@@ -14,8 +14,14 @@ import {
   githubPagesProfile,
   withGitHubLookback,
 } from "../lib/discovery/connectors/github";
-import { OpenAlexConnector } from "../lib/discovery/connectors/openalex";
-import { semanticScholarAuthorPerson } from "../lib/discovery/connectors/semantic-scholar";
+import {
+  OpenAlexConnector,
+  openAlexWorkEvents,
+} from "../lib/discovery/connectors/openalex";
+import {
+  semanticScholarAuthorPerson,
+  semanticScholarPaperEvents,
+} from "../lib/discovery/connectors/semantic-scholar";
 import {
   doiAuthorshipIdentity,
   normalizeDoi,
@@ -155,6 +161,34 @@ test("academic author profiles preserve durable ORCID and operator-useful contex
   assert.deepEqual(person.affiliations, ["Example Robotics Lab"]);
   assert.deepEqual(person.alternateNames?.map((item) => item.name), ["A. Example"]);
   assert.equal(person.websiteUrl, "https://ada.example/research");
+});
+
+test("Semantic Scholar enrichment emits only the requested author", () => {
+  const events = semanticScholarPaperEvents({
+    paperId: "paper-1",
+    title: "A collaborative paper",
+    externalIds: { DOI: "10.1000/example" },
+    authors: [
+      { authorId: "target-1", name: "Target Author" },
+      { authorId: "coauthor-2", name: "Other Author" },
+    ],
+  }, new Date("2026-07-15T12:00:00.000Z"), "target-1");
+
+  assert.deepEqual(events.map((event) => event.person.displayName), ["Target Author"]);
+  assert.equal(events[0]?.person.identities[1]?.externalId, "10.1000/example#author-0");
+});
+
+test("OpenAlex enrichment emits only the requested author", () => {
+  const events = openAlexWorkEvents({
+    id: "https://openalex.org/W1",
+    display_name: "A collaborative paper",
+    authorships: [
+      { author: { id: "https://openalex.org/A1", display_name: "Target Author" } },
+      { author: { id: "https://openalex.org/A2", display_name: "Other Author" } },
+    ],
+  }, new Date("2026-07-15T12:00:00.000Z"), "A1");
+
+  assert.deepEqual(events.map((event) => event.person.displayName), ["Target Author"]);
 });
 
 test("ORCID normalization rejects malformed and checksum-invalid identifiers", () => {
