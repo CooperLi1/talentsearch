@@ -2214,6 +2214,24 @@ export async function createDigest(input: CreateDigestInput): Promise<CreateDige
   return { created: result.value, digest: result.digest };
 }
 
+export async function getDigestByDedupeKey(
+  workspace: string | number,
+  dedupeKey: string,
+): Promise<DigestRecord | null> {
+  const normalizedKey = dedupeKey.trim();
+  if (!normalizedKey || normalizedKey.length > 200) {
+    throw new Error("Digest dedupe key must be between 1 and 200 characters");
+  }
+  const { data, error } = await db()
+    .from("digests")
+    .select("*")
+    .eq("workspace_id", workspaceId(workspace))
+    .eq("dedupe_key", normalizedKey)
+    .maybeSingle();
+  fail(error);
+  return data ? mapDigest(data as DigestRow) : null;
+}
+
 export async function listDigestCandidateSnapshots(
   id: string | number,
   workspace: string | number,

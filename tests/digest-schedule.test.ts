@@ -73,3 +73,17 @@ test("a delayed dispatcher can deliver the prior day's late send", () => {
   assert.equal(window.phase, "send");
   assert.equal(window.periodEnd, "2026-07-13T23:45:00.000Z");
 });
+
+test("a failed scheduled run remains recoverable later the same day", () => {
+  const window = digestScheduleWindow(
+    new Date("2026-07-16T01:10:00Z"),
+    [2, 3],
+    20,
+    30,
+    1,
+    12 * 60,
+  );
+  assert.equal(window.phase, "send");
+  assert.equal(window.periodEnd, "2026-07-15T20:30:00.000Z");
+  assert.equal(window.dedupeKey, "digest:2026-07-15T20:30:00.000Z");
+});

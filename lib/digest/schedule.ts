@@ -1,5 +1,6 @@
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const DISPATCH_INTERVAL_MINUTES = 15;
+const MAX_DISPATCH_WINDOW_MINUTES = 12 * 60;
 
 export type DigestDispatchPhase = "idle" | "prepare" | "send";
 
@@ -93,7 +94,7 @@ export function digestScheduleWindow(
   const days = normalizeDays(daysOfWeek);
   const { hour, minute } = normalizedTime(deliveryHourUtc, deliveryMinuteUtc);
   const leadHours = Math.min(12, Math.max(1, Math.trunc(preparationLeadHours)));
-  const windowMinutes = Math.min(180, Math.max(
+  const windowMinutes = Math.min(MAX_DISPATCH_WINDOW_MINUTES, Math.max(
     DISPATCH_INTERVAL_MINUTES,
     Math.trunc(dispatchWindowMinutes),
   ));

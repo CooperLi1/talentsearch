@@ -3,6 +3,7 @@ import {
   createDigest,
   getActiveCriterionProfile,
   getCandidateBySlug,
+  getDigestByDedupeKey,
   getOldestReadyDigest,
   listDigestCandidateSnapshots,
   listDigestSubscribers,
@@ -31,7 +32,7 @@ export const maxDuration = 300;
 const DIGEST_CLAIM_STALE_MINUTES = 15;
 const DIGEST_RETRY_WINDOW_MINUTES = 23 * 60;
 const DIGEST_RETRY_WINDOW_MILLISECONDS = DIGEST_RETRY_WINDOW_MINUTES * 60 * 1_000;
-const VERCEL_HOBBY_DISPATCH_WINDOW_MINUTES = 120;
+const VERCEL_HOBBY_DISPATCH_WINDOW_MINUTES = 12 * 60;
 
 function skipReason(digest: DigestRecord) {
   if (digest.status === "sent") return "already-sent";
@@ -220,6 +221,18 @@ export async function GET(request: Request) {
       return Response.json({ ok: true, skipped: true, reason: "not-scheduled" });
     }
     const { dedupeKey, periodStart, periodEnd } = schedule;
+    const existingDigest = await getDigestByDedupeKey(workspaceId, dedupeKey);
+    if (existingDigest) {
+      if (schedule.phase === "prepare" && existingDigest.status === "ready") {
+        return Response.json({
+          ok: true,
+          prepared: true,
+          digestId: existingDigest.id,
+          scheduledFor: periodEnd,
+        });
+      }
+      return deliverDigestRecord(existingDigest, workspaceId);
+    }
     const requestedCandidateCount = criterion?.weeklyCandidateCount ?? 12;
     const ranked = await rankCandidatesForDigest(workspaceId, {
       minimumScore: criterion?.minimumScore ?? 25,
