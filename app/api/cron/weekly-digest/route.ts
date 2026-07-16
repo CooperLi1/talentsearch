@@ -18,6 +18,7 @@ import {
   hasIndependentOperatorBriefCoverage,
 } from "@/lib/candidates/operator-brief";
 import { digestScheduleWindow } from "@/lib/digest/schedule";
+import { digestCandidateSnapshotCopy } from "@/lib/digest/candidate-snapshot";
 import { sendWeeklyDigest } from "@/lib/email/send-weekly-digest";
 import type { DigestCandidate } from "@/lib/email/types";
 import type { Json } from "@/lib/supabase/database.types";
@@ -235,11 +236,17 @@ export async function GET(request: Request) {
       .slice(0, requestedCandidateCount);
     const emailCandidates: DigestCandidate[] = candidates.map((candidate) => {
       const facts = buildOperatorBrief(candidate);
-      return {
-        id: candidate.id,
+      const copy = digestCandidateSnapshotCopy({
         name: candidate.name,
         headline: candidate.headline,
         summary: candidate.summaryMarkdown,
+        facts,
+      });
+      return {
+        id: candidate.id,
+        name: candidate.name,
+        headline: copy.headline,
+        summary: copy.summary,
         facts,
         confidence: candidate.confidenceBand,
         score: candidate.score,
