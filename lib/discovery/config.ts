@@ -261,6 +261,12 @@ const defaults: Record<SourceKind, ConnectorSettings> = {
   },
   "linkedin-manual": { enabled: false, maxItems: 100 },
   "brave-enrichment": { enabled: Boolean(process.env.BRAVE_SEARCH_API_KEY), maxItems: 8 },
+  "people-data-labs": {
+    enabled: Boolean(process.env.PEOPLE_DATA_SEARCH_KEY?.trim()),
+    maxItems: 5,
+    lookbackDays: 90,
+    options: { minLikelihood: 8 },
+  },
 };
 
 export function getDefaultConnectorSettings(): Record<SourceKind, ConnectorSettings> {
@@ -293,6 +299,9 @@ export function parseDiscoveryConfiguration(
     connectors.x.queries?.length
   ) {
     connectors.x.enabled = true;
+  }
+  if (process.env.PEOPLE_DATA_SEARCH_KEY?.trim()) {
+    connectors["people-data-labs"].enabled = true;
   }
   if (connectors.rss.urls?.length) connectors.rss.enabled = true;
   if (connectors["technical-blogs"].urls?.length) connectors["technical-blogs"].enabled = true;

@@ -9,6 +9,7 @@ import { HackerNewsConnector } from "./hacker-news";
 import { HuggingFaceConnector } from "./hugging-face";
 import { LinkedInManualConnector } from "./linkedin-manual";
 import { OpenAlexConnector } from "./openalex";
+import { PeopleDataLabsConnector } from "./people-data-labs";
 import { SemanticScholarConnector } from "./semantic-scholar";
 import { StructuredResultsConnector } from "./structured-results";
 import { XConnector } from "./x";
@@ -45,6 +46,7 @@ export function createConnectorRegistry(): Map<SourceKind, DiscoveryConnector> {
     new XConnector(),
     new LinkedInManualConnector(),
     new BraveEnrichmentConnector(),
+    new PeopleDataLabsConnector(),
   ];
   return new Map(connectors.map((connector) => [connector.kind, connector]));
 }
@@ -60,6 +62,7 @@ export {
   HuggingFaceConnector,
   LinkedInManualConnector,
   OpenAlexConnector,
+  PeopleDataLabsConnector,
   SemanticScholarConnector,
   StructuredResultsConnector,
   XConnector,

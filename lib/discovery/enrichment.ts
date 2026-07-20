@@ -140,6 +140,10 @@ export async function enrichPeople(input: {
           enqueue(connectorKindForIdentity(identity.provider));
         }
         if (enrichedPerson.websiteUrl) enqueue("web-presence");
+        // Licensed professional history applies to every candidate, not only
+        // those with a provider identity. It runs ahead of public search so
+        // search queries can use the licensed headline and affiliations.
+        enqueue("people-data-labs");
         enqueue("brave-enrichment");
       };
       enqueueKnownProviders();

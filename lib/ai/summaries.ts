@@ -47,7 +47,19 @@ export function needsPlainLanguageRetry(
   );
 }
 
+/**
+ * Licensed work-history snapshots carry employment and education facts that
+ * public technical sources rarely state. Only provider-subject-verified
+ * imports qualify; fuzzy matches stay out of briefs until corroborated.
+ */
+export function isLicensedProfileBriefEvent(event: DiscoveryEvent) {
+  return event.source === "people-data-labs" &&
+    event.confidence >= 0.9 &&
+    event.tags?.includes("verified-provider-subject") === true;
+}
+
 export function isSubstantiveBriefEvent(event: DiscoveryEvent) {
+  if (isLicensedProfileBriefEvent(event)) return true;
   return event.confidence >= 0.65 &&
     !["profile_observed", "social_graph_signal"].includes(event.type);
 }
@@ -64,7 +76,7 @@ export function isCandidateIntroductionEvidence(event: DiscoveryEvent) {
     "orcid",
   ].includes(event.source) && ["profile_observed", "other"].includes(event.type);
   return event.confidence >= 0.75 &&
-    Boolean(candidateOwned || profileLikePublisher) &&
+    Boolean(candidateOwned || profileLikePublisher || isLicensedProfileBriefEvent(event)) &&
     INTRODUCTION_SIGNAL.test(`${event.title} ${event.description ?? ""}`);
 }
 

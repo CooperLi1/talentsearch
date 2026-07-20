@@ -21,6 +21,7 @@ export const SOURCE_KINDS = [
   "x",
   "linkedin-manual",
   "brave-enrichment",
+  "people-data-labs",
 ] as const;
 
 export type SourceKind = (typeof SOURCE_KINDS)[number];
