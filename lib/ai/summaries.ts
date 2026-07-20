@@ -1,6 +1,7 @@
 import { generateText, Output } from "ai";
 
 import type { CandidateScore, DiscoveryEvent, PersonObservation } from "@/lib/discovery/types";
+import { configuredBriefFactCount } from "@/lib/candidates/brief-policy";
 import { sanitizePlainText } from "@/lib/discovery/security";
 import {
   candidateSummaryGenerationSchema,
@@ -229,7 +230,7 @@ export function candidateBriefContractIssues(
       }),
   );
   const lines = summaryMarkdown.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length < 2 || lines.length > 3) issues.add("line-count");
+  if (lines.length < 2 || lines.length > 5) issues.add("line-count");
   for (const line of lines) {
     if (!/^[-*]\s+/.test(line)) issues.add("bullet-format");
     const links = [...line.matchAll(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/g)]
@@ -275,7 +276,7 @@ function renderOperatorFacts(
     const citations = urls.map((url, index) => `[Source${urls.length > 1 ? ` ${index + 1}` : ""}](${url})`).join(" ");
     return [`- ${text} ${citations}`];
   });
-  return lines.length >= 2 ? lines.slice(0, 3).join("\n") : null;
+  return lines.length >= 2 ? lines.slice(0, 5).join("\n") : null;
 }
 
 function operatorFactPublisherCount(
@@ -475,16 +476,23 @@ export async function generateCandidateBrief(
         focusIndexes.some((focusIndex) => focusIndex !== introIndex),
       );
     };
-    const targetFactCount = Math.min(3, briefEvidence.length);
+    const targetFactCount = Math.min(configuredBriefFactCount(), briefEvidence.length);
     const requiresPublisherDiversity = new Set(
       briefEvidence.map((item) => item.publisher),
     ).size >= 2;
+    const briefStructureRules = [
+      `The operatorFacts field is the operator-facing brief: ${targetFactCount} facts with fixed jobs. Return fewer only when the supplied evidence cannot support them. Do not put Markdown in the fact text and never add filler to reach the target.`,
+      "- Fact 1 is the background: who the person is — school, degree, current role, employer, or work history — using only facts in the evidence. Prefer licensed work-history and profile evidence here. If REQUIRED INTRODUCTION EVIDENCE is nonempty, this fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.",
+      targetFactCount >= 4
+        ? "- The middle facts are the most impressive things they have done: the strongest things they built, published, won, or made happen, each stated with its concrete result, adoption, or recognition."
+        : "- Fact 2 is the most impressive thing they have done: the strongest thing they built, published, won, or made happen, stated with its concrete result, adoption, or recognition.",
+      targetFactCount >= 3
+        ? "- The final fact is the wild card: the most distinctive, surprising, or telling remaining detail — an unusual project, an odd combination of skills, early traction, or an outlier result — that a reader would remember. It must not restate the other facts."
+        : "",
+    ].filter(Boolean).join("\n");
     const prompt = `Create an updated candidate brief for a nontechnical early-stage investor. The previous summary is context only and must not override current evidence.
 
-The operatorFacts field is the operator-facing brief: three facts with fixed jobs. Return fewer only when the supplied evidence cannot support them. Do not put Markdown in the fact text and never add filler to reach the target.
-- Fact 1 is the background: who the person is — school, degree, current role, employer, or work history — using only facts in the evidence. Prefer licensed work-history and profile evidence here. If REQUIRED INTRODUCTION EVIDENCE is nonempty, this fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.
-- Fact 2 is the most impressive thing they have done: the strongest thing they built, published, won, or made happen, stated with its concrete result, adoption, or recognition.
-- Fact 3 is the wild card: the most distinctive, surprising, or telling remaining detail — an unusual project, an odd combination of skills, early traction, or an outlier result — that a reader would remember. It must not restate facts 1 or 2.
+${briefStructureRules}
 - If REQUIRED RESEARCH FOCUS EVIDENCE is nonempty, one of the facts must plainly state the person's research focus. A portfolio or repository name does not satisfy this requirement.
 - Include a role, affiliation, or field only when a cited page states it. Never turn a username, biography slogan, or repository description into a job title.
 - Use ordinary language. Explain what the work does and the concrete result before naming implementation details.
@@ -543,7 +551,7 @@ Rules:
 - Remove appended interpretations such as "providing insights" or "facilitating entry." End the sentence after the supported capability or result.
 - Remove tails such as "improving reliability," "demonstrating practical applications," "highlighting skills," and "more effectively." They are commentary, not facts.
 - Translate "vision-language-action" into the concrete capability, such as AI that uses images and instructions to control a robot, when the evidence supports that description.
-- Target 3 distinct facts and preserve their jobs: background first, then the most impressive achievement, then the wild-card detail. Return fewer only if another fact would be filler or unsupported.
+- Target ${targetFactCount} distinct facts and preserve their jobs: background first, then the most impressive achievements, then the wild-card detail. Return fewer only if another fact would be filler or unsupported.
 - Do not put evidence IDs in the text.
 - When the evidence includes two or more publisher values, cite at least two different publisher values across the completed facts.
 - When two evidence records have the same work title but different publisher values, cite both IDs on a fact about that work.
@@ -908,7 +916,7 @@ ${JSON.stringify(researchFocusEvidenceIds)}`,
     if (verifiedDiversityFailure) return reject("verified-publisher-diversity");
     if (verifiedIntroductionFailure) return reject("verified-introduction-missing");
     if (verifiedResearchFocusFailure) return reject("verified-research-focus-missing");
-    output = { ...output, operatorFacts: verifiedFacts };
+    output = { ...output, operatorFacts: verifiedFacts.slice(0, targetFactCount) };
     const summary = renderOperatorFacts(output.operatorFacts, briefEvidence);
     if (!summary) return reject("render-contract");
     return { ...output, summary };

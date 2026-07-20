@@ -139,7 +139,7 @@ test("candidate-owned role and research evidence leads the 20-second brief conte
   assert.equal(isCandidateIntroductionEvidence(indexedPaper), false);
 });
 
-test("operator brief schema caps briefs at three facts", () => {
+test("operator brief schema bounds facts to the configurable range", () => {
   const fact = (index: number) => ({
     text: `Grounded candidate fact number ${index + 1}`,
     sourceIds: [`E${index + 1}`],
@@ -148,10 +148,30 @@ test("operator brief schema caps briefs at three facts", () => {
     operatorFacts: Array.from({ length: 3 }, (_, index) => fact(index)),
   });
   assert.equal(three.success, true);
-  const five = operatorFactsGenerationSchema.safeParse({
-    operatorFacts: Array.from({ length: 5 }, (_, index) => fact(index)),
+  const six = operatorFactsGenerationSchema.safeParse({
+    operatorFacts: Array.from({ length: 6 }, (_, index) => fact(index)),
   });
-  assert.equal(five.success, false);
+  assert.equal(six.success, false);
+});
+
+test("configured brief fact count clamps to a sane range", async () => {
+  const { configuredBriefFactCount } = await import("../lib/candidates/brief-policy");
+  const previous = process.env.CANDIDATE_BRIEF_FACT_COUNT;
+  try {
+    delete process.env.CANDIDATE_BRIEF_FACT_COUNT;
+    assert.equal(configuredBriefFactCount(), 3);
+    process.env.CANDIDATE_BRIEF_FACT_COUNT = "5";
+    assert.equal(configuredBriefFactCount(), 5);
+    process.env.CANDIDATE_BRIEF_FACT_COUNT = "1";
+    assert.equal(configuredBriefFactCount(), 2);
+    process.env.CANDIDATE_BRIEF_FACT_COUNT = "12";
+    assert.equal(configuredBriefFactCount(), 5);
+    process.env.CANDIDATE_BRIEF_FACT_COUNT = "not-a-number";
+    assert.equal(configuredBriefFactCount(), 3);
+  } finally {
+    if (previous === undefined) delete process.env.CANDIDATE_BRIEF_FACT_COUNT;
+    else process.env.CANDIDATE_BRIEF_FACT_COUNT = previous;
+  }
 });
 
 test("plain-language review catches implementation jargon and filler", () => {

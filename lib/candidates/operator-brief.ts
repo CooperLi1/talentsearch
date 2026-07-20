@@ -1,5 +1,5 @@
 import type { Candidate, EvidenceLink, TalentEvent } from "@/lib/domain/types";
-import { CURRENT_CANDIDATE_BRIEF_POLICY } from "./brief-policy";
+import { configuredBriefFactCount, CURRENT_CANDIDATE_BRIEF_POLICY } from "./brief-policy";
 
 export type OperatorBriefSource = Pick<EvidenceLink, "label" | "url">;
 
@@ -305,7 +305,7 @@ function summaryFragments(markdown: string) {
  * Facts are intentionally extractive: this function never invents credentials or
  * pads a sparse record to reach the requested count.
  */
-export function buildOperatorBrief(candidate: Candidate, limit = 5): OperatorBriefFact[] {
+export function buildOperatorBrief(candidate: Candidate, limit = configuredBriefFactCount()): OperatorBriefFact[] {
   const maximum = Math.max(1, Math.min(5, Math.floor(limit)));
   const grounded = groundedSummaryFacts(candidate);
   if (grounded.length >= 2) return grounded.slice(0, maximum);
