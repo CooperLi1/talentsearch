@@ -14,6 +14,7 @@ import {
 import type { DigestRecord } from "@/lib/data/contracts";
 import {
   buildOperatorBrief,
+  dominantEvidencePublisher,
   hasGroundedOperatorBrief,
   hasIndependentEvidenceCoverage,
   hasIndependentOperatorBriefCoverage,
@@ -246,13 +247,33 @@ export async function GET(request: Request) {
         ? Math.min(365, Math.max(1, Math.floor(requestedExcludeDays)))
         : 365,
     });
-    const candidates = (await Promise.all(ranked.map((item) => getCandidateBySlug(item.slug, workspaceId))))
+    const eligible = (await Promise.all(ranked.map((item) => getCandidateBySlug(item.slug, workspaceId))))
       .filter((candidate): candidate is NonNullable<typeof candidate> =>
         Boolean(candidate) && hasGroundedOperatorBrief(candidate as NonNullable<typeof candidate>),
       )
       .filter((candidate) => hasIndependentEvidenceCoverage(candidate))
-      .filter((candidate) => hasIndependentOperatorBriefCoverage(candidate))
-      .slice(0, requestedCandidateCount);
+      .filter((candidate) => hasIndependentOperatorBriefCoverage(candidate));
+    // One prolific source must not fill the digest. Cap each dominant
+    // publisher, then backfill by rank only if the diverse pick runs short.
+    const perPublisherCap = Math.max(2, Math.ceil(requestedCandidateCount / 3));
+    const publisherCounts = new Map<string, number>();
+    const diversePick: typeof eligible = [];
+    const overflow: typeof eligible = [];
+    for (const candidate of eligible) {
+      if (diversePick.length >= requestedCandidateCount) break;
+      const publisher = dominantEvidencePublisher(candidate) ?? "unknown";
+      const used = publisherCounts.get(publisher) ?? 0;
+      if (used < perPublisherCap) {
+        publisherCounts.set(publisher, used + 1);
+        diversePick.push(candidate);
+      } else {
+        overflow.push(candidate);
+      }
+    }
+    const candidates = [
+      ...diversePick,
+      ...overflow.slice(0, Math.max(0, requestedCandidateCount - diversePick.length)),
+    ];
     const emailCandidates: DigestCandidate[] = candidates.map((candidate) => {
       const facts = buildOperatorBrief(candidate);
       const copy = digestCandidateSnapshotCopy({

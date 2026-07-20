@@ -39,7 +39,7 @@ export const operatorFactsGenerationSchema = z.object({
   operatorFacts: z.array(z.object({
     text: z.string().min(18).max(190),
     sourceIds: z.array(z.string().min(2).max(12)).min(1).max(2),
-  })).min(2).max(5),
+  })).min(2).max(3),
 });
 
 export const operatorFactsVerificationSchema = z.object({

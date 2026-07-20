@@ -139,14 +139,19 @@ test("candidate-owned role and research evidence leads the 20-second brief conte
   assert.equal(isCandidateIntroductionEvidence(indexedPaper), false);
 });
 
-test("operator brief schema supports a five-fact target", () => {
-  const parsed = operatorFactsGenerationSchema.safeParse({
-    operatorFacts: Array.from({ length: 5 }, (_, index) => ({
-      text: `Grounded candidate fact number ${index + 1}`,
-      sourceIds: [`E${index + 1}`],
-    })),
+test("operator brief schema caps briefs at three facts", () => {
+  const fact = (index: number) => ({
+    text: `Grounded candidate fact number ${index + 1}`,
+    sourceIds: [`E${index + 1}`],
   });
-  assert.equal(parsed.success, true);
+  const three = operatorFactsGenerationSchema.safeParse({
+    operatorFacts: Array.from({ length: 3 }, (_, index) => fact(index)),
+  });
+  assert.equal(three.success, true);
+  const five = operatorFactsGenerationSchema.safeParse({
+    operatorFacts: Array.from({ length: 5 }, (_, index) => fact(index)),
+  });
+  assert.equal(five.success, false);
 });
 
 test("plain-language review catches implementation jargon and filler", () => {

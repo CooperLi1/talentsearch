@@ -184,7 +184,12 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
       // corroborating anchor, or common names would bill for wrong people.
       if (name.split(/\s+/).filter(Boolean).length < 2 || (!affiliation && !location)) return null;
       endpoint.searchParams.set("name", name);
-      if (affiliation) endpoint.searchParams.set("company", affiliation);
+      // Scholarly-sourced affiliations are usually institutions; the provider
+      // matches those on its school field, not employer.
+      if (affiliation) {
+        const academic = /\b(universit|institute|college|school|academy|polytech|laborator)\b/i.test(affiliation);
+        endpoint.searchParams.set(academic ? "school" : "company", affiliation);
+      }
       if (location) endpoint.searchParams.set("location", location);
     }
 

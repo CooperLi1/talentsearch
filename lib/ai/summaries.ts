@@ -229,7 +229,7 @@ export function candidateBriefContractIssues(
       }),
   );
   const lines = summaryMarkdown.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length < 2 || lines.length > 5) issues.add("line-count");
+  if (lines.length < 2 || lines.length > 3) issues.add("line-count");
   for (const line of lines) {
     if (!/^[-*]\s+/.test(line)) issues.add("bullet-format");
     const links = [...line.matchAll(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/g)]
@@ -275,7 +275,7 @@ function renderOperatorFacts(
     const citations = urls.map((url, index) => `[Source${urls.length > 1 ? ` ${index + 1}` : ""}](${url})`).join(" ");
     return [`- ${text} ${citations}`];
   });
-  return lines.length >= 2 ? lines.slice(0, 5).join("\n") : null;
+  return lines.length >= 2 ? lines.slice(0, 3).join("\n") : null;
 }
 
 function operatorFactPublisherCount(
@@ -475,18 +475,18 @@ export async function generateCandidateBrief(
         focusIndexes.some((focusIndex) => focusIndex !== introIndex),
       );
     };
-    const targetFactCount = Math.min(5, briefEvidence.length);
+    const targetFactCount = Math.min(3, briefEvidence.length);
     const requiresPublisherDiversity = new Set(
       briefEvidence.map((item) => item.publisher),
     ).size >= 2;
     const prompt = `Create an updated candidate brief for a nontechnical early-stage investor. The previous summary is context only and must not override current evidence.
 
-The operatorFacts field is the operator-facing brief. Target 5 distinct facts. Return fewer only when the supplied evidence cannot support five useful facts. Do not put Markdown in the fact text and never add filler to reach the target.
-- Write this as the factual version of what the person would say in a 20-second introduction: who they are, what they focus on, and the strongest proof of what they have done.
-- Start with who the person is, using only facts in the evidence. If REQUIRED INTRODUCTION EVIDENCE is nonempty, the first fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.
-- If REQUIRED RESEARCH FOCUS EVIDENCE is nonempty, include a fact that plainly states the person's research focus. A portfolio or repository name does not satisfy this requirement.
+The operatorFacts field is the operator-facing brief: three facts with fixed jobs. Return fewer only when the supplied evidence cannot support them. Do not put Markdown in the fact text and never add filler to reach the target.
+- Fact 1 is the background: who the person is — school, degree, current role, employer, or work history — using only facts in the evidence. Prefer licensed work-history and profile evidence here. If REQUIRED INTRODUCTION EVIDENCE is nonempty, this fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.
+- Fact 2 is the most impressive thing they have done: the strongest thing they built, published, won, or made happen, stated with its concrete result, adoption, or recognition.
+- Fact 3 is the wild card: the most distinctive, surprising, or telling remaining detail — an unusual project, an odd combination of skills, early traction, or an outlier result — that a reader would remember. It must not restate facts 1 or 2.
+- If REQUIRED RESEARCH FOCUS EVIDENCE is nonempty, one of the facts must plainly state the person's research focus. A portfolio or repository name does not satisfy this requirement.
 - Include a role, affiliation, or field only when a cited page states it. Never turn a username, biography slogan, or repository description into a job title.
-- Then explain the strongest things they built, published, won, or made happen.
 - Use ordinary language. Explain what the work does and the concrete result before naming implementation details.
 - Assume the reader does not know programming libraries, AI model names, protocols, compiler internals, hardware model numbers, or academic jargon.
 - Translate implementation details into the capability they produced. For example, say "a robot arm that recognizes and picks up objects," not the model name, processor, library, or control architecture.
@@ -543,7 +543,7 @@ Rules:
 - Remove appended interpretations such as "providing insights" or "facilitating entry." End the sentence after the supported capability or result.
 - Remove tails such as "improving reliability," "demonstrating practical applications," "highlighting skills," and "more effectively." They are commentary, not facts.
 - Translate "vision-language-action" into the concrete capability, such as AI that uses images and instructions to control a robot, when the evidence supports that description.
-- Target 5 distinct facts. Return fewer only if another fact would be filler or unsupported.
+- Target 3 distinct facts and preserve their jobs: background first, then the most impressive achievement, then the wild-card detail. Return fewer only if another fact would be filler or unsupported.
 - Do not put evidence IDs in the text.
 - When the evidence includes two or more publisher values, cite at least two different publisher values across the completed facts.
 - When two evidence records have the same work title but different publisher values, cite both IDs on a fact about that work.

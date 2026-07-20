@@ -137,6 +137,19 @@ export function hasIndependentEvidenceCoverage(candidate: Candidate, minimum = 2
   return candidateEvidencePublishers(candidate).length >= Math.max(1, Math.floor(minimum));
 }
 
+/** The publisher behind most of a candidate's substantive evidence. */
+export function dominantEvidencePublisher(candidate: Candidate) {
+  const counts = new Map<string, number>();
+  for (const event of candidate.events) {
+    const publisher = eventPublisher(event);
+    if (!publisher) continue;
+    counts.set(publisher, (counts.get(publisher) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .at(0)?.[0] ?? null;
+}
+
 function groundedSummaryFacts(candidate: Candidate): OperatorBriefFact[] {
   if (candidate.briefPolicyVersion !== CURRENT_CANDIDATE_BRIEF_POLICY) return [];
   const allowedSources = new Map<string, OperatorBriefSource>();

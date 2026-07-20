@@ -1,1 +1,1 @@
-export const CURRENT_CANDIDATE_BRIEF_POLICY = "operator-v38";
+export const CURRENT_CANDIDATE_BRIEF_POLICY = "operator-v39";
