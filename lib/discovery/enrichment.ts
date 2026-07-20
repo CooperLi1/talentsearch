@@ -144,6 +144,12 @@ export async function enrichPeople(input: {
         // those with a provider identity. It runs ahead of public search so
         // search queries can use the licensed headline and affiliations.
         enqueue("people-data-labs");
+        // Then try every other enabled research connector: handle-based ones
+        // no-op until a verified account exists, while indexes that can search
+        // safely by corroborated name extend coverage across sources.
+        for (const kind of Object.keys(input.settings) as SourceKind[]) {
+          if (kind !== "brave-enrichment") enqueue(kind);
+        }
         enqueue("brave-enrichment");
       };
       enqueueKnownProviders();

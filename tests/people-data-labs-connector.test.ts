@@ -177,3 +177,30 @@ test("verified licensed profiles reach briefs; fuzzy matches stay excluded", asy
   assert.equal(isLicensedProfileBriefEvent(fuzzy), false);
   assert.equal(isSubstantiveBriefEvent(fuzzy), false);
 });
+
+test("OpenAlex name search binds only a unique name-and-affiliation match", async () => {
+  const { matchAuthorByNameAndAffiliation } = await import("../lib/discovery/connectors/openalex");
+  const authors = [
+    {
+      id: "https://openalex.org/A1",
+      display_name: "Reviewed Person",
+      last_known_institutions: [{ display_name: "Example University" }],
+    },
+    {
+      id: "https://openalex.org/A2",
+      display_name: "Reviewed Person",
+      last_known_institutions: [{ display_name: "Other Institute" }],
+    },
+  ];
+  assert.equal(
+    matchAuthorByNameAndAffiliation(authors, "Reviewed Person", ["Example University"])?.id,
+    "https://openalex.org/A1",
+  );
+  assert.equal(matchAuthorByNameAndAffiliation(authors, "Reviewed Person", ["Unknown Lab"]), null);
+  const ambiguous = authors.map((author) => ({
+    ...author,
+    last_known_institutions: [{ display_name: "Example University" }],
+  }));
+  assert.equal(matchAuthorByNameAndAffiliation(ambiguous, "Reviewed Person", ["Example University"]), null);
+  assert.equal(matchAuthorByNameAndAffiliation(authors, "Reviewed", ["Example University"]), null);
+});

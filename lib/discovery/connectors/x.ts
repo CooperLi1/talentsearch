@@ -160,7 +160,7 @@ export class XConnector implements DiscoveryConnector {
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
     if (!process.env.X_BEARER_TOKEN || !xDataUseApproved()) return null;
     const identity = context.person.identities.find(
-      (item) => item.provider === "x" && (item.username || item.externalId),
+      (item) => item.provider === "x" && item.verified === true && (item.username || item.externalId),
     );
     if (!identity) return null;
     const userUrl = identity.username

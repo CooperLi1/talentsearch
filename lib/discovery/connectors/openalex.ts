@@ -18,7 +18,54 @@ type OpenAlexAuthor = {
   id: string;
   display_name: string;
   orcid?: string | null;
+  display_name_alternatives?: string[];
+  last_known_institutions?: Array<{ display_name?: string }>;
+  affiliations?: Array<{ institution?: { display_name?: string } }>;
 };
+
+function comparableName(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function comparableInstitution(value: string) {
+  return comparableName(value).replace(/\b(the|of|at|and)\b/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A name-only search can bind the wrong scholar, so an author qualifies only
+ * when the name matches exactly and a stated institution corroborates a known
+ * affiliation — and only when exactly one searched author clears that bar.
+ */
+export function matchAuthorByNameAndAffiliation(
+  authors: OpenAlexAuthor[],
+  displayName: string,
+  affiliations: string[],
+): OpenAlexAuthor | null {
+  const wanted = comparableName(displayName);
+  const knownInstitutions = affiliations.map(comparableInstitution).filter((value) => value.length >= 4);
+  if (!wanted || wanted.split(" ").length < 2 || !knownInstitutions.length) return null;
+  const matches = authors.filter((author) => {
+    const names = [author.display_name, ...(author.display_name_alternatives ?? [])]
+      .map(comparableName);
+    if (!names.includes(wanted)) return false;
+    const institutions = [
+      ...(author.last_known_institutions ?? []).map((item) => item.display_name ?? ""),
+      ...(author.affiliations ?? []).map((item) => item.institution?.display_name ?? ""),
+    ].map(comparableInstitution).filter(Boolean);
+    return institutions.some((institution) =>
+      knownInstitutions.some(
+        (known) => institution.includes(known) || known.includes(institution),
+      ),
+    );
+  });
+  return matches.length === 1 ? matches[0]! : null;
+}
 
 type OpenAlexAuthorship = {
   author: OpenAlexAuthor;
@@ -203,19 +250,40 @@ export class OpenAlexConnector implements DiscoveryConnector {
         .filter((item) => item.provider === "orcid" && item.verified === true)
         .map((item) => normalizeOrcid(item.externalId))
         .find(Boolean);
-      if (!orcid) return null;
-      const authorUrl = new URL("https://api.openalex.org/authors");
-      authorUrl.searchParams.set("filter", `orcid:${orcid}`);
-      authorUrl.searchParams.set("per-page", "1");
-      authenticate(authorUrl);
-      const authorResponse = await fetchJson<OpenAlexAuthorResponse>(authorUrl.toString(), {
-        signal: context.signal,
-        rateLimitPerSecond: 4,
-        retries: 1,
-        timeoutMs: 8_000,
-      });
-      authorId = authorResponse.results?.[0]?.id.replace("https://openalex.org/", "");
-      if (!authorId) return { events: [], warnings: [`No OpenAlex author matched ORCID ${orcid}`] };
+      if (orcid) {
+        const authorUrl = new URL("https://api.openalex.org/authors");
+        authorUrl.searchParams.set("filter", `orcid:${orcid}`);
+        authorUrl.searchParams.set("per-page", "1");
+        authenticate(authorUrl);
+        const authorResponse = await fetchJson<OpenAlexAuthorResponse>(authorUrl.toString(), {
+          signal: context.signal,
+          rateLimitPerSecond: 4,
+          retries: 1,
+          timeoutMs: 8_000,
+        });
+        authorId = authorResponse.results?.[0]?.id.replace("https://openalex.org/", "");
+        if (!authorId) return { events: [], warnings: [`No OpenAlex author matched ORCID ${orcid}`] };
+      } else {
+        // Cross-source fallback: scholars discovered on other indexes gain
+        // OpenAlex coverage through a corroborated author-name search.
+        const searchUrl = new URL("https://api.openalex.org/authors");
+        searchUrl.searchParams.set("search", context.person.displayName);
+        searchUrl.searchParams.set("per-page", "10");
+        authenticate(searchUrl);
+        const searchResponse = await fetchJson<OpenAlexAuthorResponse>(searchUrl.toString(), {
+          signal: context.signal,
+          rateLimitPerSecond: 4,
+          retries: 1,
+          timeoutMs: 8_000,
+        });
+        const matched = matchAuthorByNameAndAffiliation(
+          searchResponse.results ?? [],
+          context.person.displayName,
+          context.person.affiliations ?? [],
+        );
+        if (!matched) return null;
+        authorId = matched.id.replace("https://openalex.org/", "");
+      }
     }
     const url = new URL("https://api.openalex.org/works");
     url.searchParams.set("filter", `author.id:${authorId},is_retracted:false`);

@@ -165,7 +165,7 @@ export class HackerNewsConnector implements DiscoveryConnector {
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
     const identity = context.person.identities.find(
-      (item) => item.provider === "hacker-news" && item.username,
+      (item) => item.provider === "hacker-news" && item.verified === true && item.username,
     );
     if (!identity?.username) return null;
     const handle = encodeURIComponent(identity.username);

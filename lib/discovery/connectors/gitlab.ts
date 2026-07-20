@@ -196,7 +196,7 @@ export class GitLabConnector implements DiscoveryConnector {
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
     const identity = context.person.identities.find(
-      (item) => item.provider === "gitlab" && item.username,
+      (item) => item.provider === "gitlab" && item.verified === true && item.username,
     );
     if (!identity?.username) return null;
     const users = await gitLabJson<GitLabUser[]>(

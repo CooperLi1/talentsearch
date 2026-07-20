@@ -140,7 +140,7 @@ export class CodeforcesConnector implements DiscoveryConnector {
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
     const identity = context.person.identities.find(
-      (item) => item.provider === "codeforces" && item.username,
+      (item) => item.provider === "codeforces" && item.verified === true && item.username,
     );
     if (!identity?.username) return null;
     const handle = encodeURIComponent(identity.username);

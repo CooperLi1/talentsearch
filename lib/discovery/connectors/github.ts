@@ -261,7 +261,7 @@ export class GitHubConnector implements DiscoveryConnector {
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
     const identity = context.person.identities.find(
-      (item) => item.provider === "github" && item.username,
+      (item) => item.provider === "github" && item.verified === true && item.username,
     );
     if (!identity?.username) return null;
     const login = encodeURIComponent(identity.username);
@@ -374,7 +374,7 @@ export class GitHubConnector implements DiscoveryConnector {
 
   async expandGraph(context: ConnectorEnrichmentContext): Promise<GraphEdge[]> {
     const identity = context.person.identities.find(
-      (item) => item.provider === "github" && item.username,
+      (item) => item.provider === "github" && item.verified === true && item.username,
     );
     if (!identity?.username) return [];
     const maxItems = Math.min(50, context.settings.maxItems ?? 25);

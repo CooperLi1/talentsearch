@@ -36,7 +36,7 @@ services:
       - key: WORKER_ENRICHMENT_CONCURRENCY
         value: "2"
       - key: WORKER_CONNECTORS_PER_PASS
-        value: "8"
+        value: "12"
       - key: WORKER_POLL_MS
         value: "5000"
       - key: WORKER_EMPTY_POLL_MS
