@@ -234,11 +234,17 @@ export async function GET(request: Request) {
       return deliverDigestRecord(existingDigest, workspaceId);
     }
     const requestedCandidateCount = criterion?.weeklyCandidateCount ?? 12;
+    const requestedExcludeDays = Number(process.env.DIGEST_NO_REPEAT_DAYS ?? 365);
     const ranked = await rankCandidatesForDigest(workspaceId, {
       minimumScore: criterion?.minimumScore ?? 25,
       // Hydration applies the independent-publisher gate, so inspect the full
       // bounded ranking instead of assuming the first few rows will qualify.
       limit: 100,
+      // A person featured once should not reappear; the ranking function caps
+      // the window at a year, which is "never" at this product's age.
+      excludeDays: Number.isFinite(requestedExcludeDays)
+        ? Math.min(365, Math.max(1, Math.floor(requestedExcludeDays)))
+        : 365,
     });
     const candidates = (await Promise.all(ranked.map((item) => getCandidateBySlug(item.slug, workspaceId))))
       .filter((candidate): candidate is NonNullable<typeof candidate> =>
