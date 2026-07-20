@@ -1091,6 +1091,11 @@ function sourceSetupRequirement(row: SourceRow) {
       ? null
       : ("web_search_connection" as const);
   }
+  if (row.kind === "people-data-labs") {
+    return process.env.PEOPLE_DATA_SEARCH_KEY?.trim()
+      ? null
+      : ("people_data_labs_connection" as const);
+  }
   // Personal-site enrichment can run from a verified website already attached
   // to a candidate; configured seed URLs are optional broad-discovery inputs.
   if (row.kind === "web-presence") return null;

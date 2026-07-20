@@ -13,6 +13,7 @@ const setupMessages: Record<SourceSetupRequirement, string> = {
   x_data_use_approval: "Confirm the approved X data use before including this source.",
   x_queries: "Add at least one X search query before including this source.",
   web_search_connection: "Finish public web search setup before including this source.",
+  people_data_labs_connection: "Add the People Data Labs API key before including this source.",
   linkedin_profiles: "Add at least one reviewed LinkedIn profile before including this source.",
   feed_urls: "Add at least one feed or site before including this source.",
   structured_pages: "Add at least one reviewed results page before including this source.",

@@ -30,6 +30,7 @@ export type SourceSetupRequirement =
   | "x_data_use_approval"
   | "x_queries"
   | "web_search_connection"
+  | "people_data_labs_connection"
   | "linkedin_profiles"
   | "feed_urls"
   | "structured_pages"
