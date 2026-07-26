@@ -22,6 +22,11 @@ const GENERIC_PUBLISHER_BYLINES = new Set([
   "gitlab",
   "mozilla",
   "mozilla hacks",
+  "google",
+  "indeed engineering",
+  "netflix technology blog",
+  "pinterest engineering",
+  "spotify engineering",
 ]);
 
 function list<T>(value: T | T[] | undefined): T[] {
@@ -80,7 +85,15 @@ function entryUrl(entry: FeedEntry, feedUrl: string): string {
 export function extractFeedAuthors(entry: Record<string, unknown>): string[] {
   const authors: string[] = [];
   const seen = new Set<string>();
-  for (const raw of [entry.author, entry.creator, entry.contributor].flatMap(scalarValues)) {
+  const rawAuthors = [entry.author, entry.creator, entry.contributor]
+    .flatMap(scalarValues)
+    .flatMap((raw) => {
+      const parts = raw.split(/\s*,\s*/).filter(Boolean);
+      return parts.length > 1 && parts.every((part) => part.trim().split(/\s+/).length >= 2)
+        ? parts
+        : [raw];
+    });
+  for (const raw of rawAuthors) {
     const author = sanitizePlainText(raw, 200);
     const normalized = author
       .toLocaleLowerCase("en-US")

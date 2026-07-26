@@ -7,6 +7,7 @@ import type {
   CandidateListOptions,
   CandidateSearchOptions,
   CandidateStatus,
+  CriterionCharacteristic,
   CriterionProfile,
   CriterionSignal,
   DigestCadence,
@@ -29,6 +30,8 @@ import { getAdminSupabaseClient, hasSupabaseAdminEnv } from "@/lib/supabase/admi
 import { assertPublicHttpUrl, isBlockedIp, sanitizePlainText } from "@/lib/discovery/security";
 import { isLinkedInDirectAccessApproved } from "@/lib/discovery/linkedin-policy";
 import { nullableSearchFilter } from "@/lib/search/filters";
+import { mergeCriterionCharacteristics } from "@/lib/criteria/characteristics";
+import { DEFAULT_CRITERION_SIGNALS } from "@/lib/criteria/signals";
 import type { CandidateRow, CriterionProfileRow, DigestItemRow, DigestRow, DigestSubscriberRow, EventRow, Json, SourceRow } from "@/lib/supabase/database.types";
 
 import type {
@@ -287,6 +290,7 @@ const emptyCriterion: CriterionProfile = {
   lookForMarkdown: "",
   avoidMarkdown: "",
   signals: [],
+  characteristics: mergeCriterionCharacteristics(undefined),
   minimumScore: 25,
   minimumConfidence: 0.6,
   weeklyCandidateCount: 12,
@@ -565,25 +569,33 @@ function mapCandidate(row: CandidateRow, related: RelatedRows): Candidate {
   };
 }
 
-async function hydrate(rows: CandidateRow[]): Promise<Candidate[]> {
+async function hydrate(
+  rows: CandidateRow[],
+  options: { includeGraph?: boolean } = {},
+): Promise<Candidate[]> {
   if (!rows.length) return [];
   const client = db();
   const ids = rows.map((row) => row.id);
+  const emptyResult = Promise.resolve({ data: [], error: null });
   const [eventsResult, identitiesResult, graphNodesResult, graphEdgesResult] = await Promise.all([
     client.from("events").select("*").in("candidate_id", ids).order("discovered_at", { ascending: false }),
     client.from("identities").select("*").in("candidate_id", ids),
-    client
-      .from("graph_nodes")
-      .select("*")
-      .eq("workspace_id", rows[0].workspace_id)
-      .order("last_seen_at", { ascending: false })
-      .limit(2_500),
-    client
-      .from("graph_edges")
-      .select("*")
-      .eq("workspace_id", rows[0].workspace_id)
-      .order("strength", { ascending: false })
-      .limit(5_000),
+    options.includeGraph === false
+      ? emptyResult
+      : client
+          .from("graph_nodes")
+          .select("*")
+          .eq("workspace_id", rows[0].workspace_id)
+          .order("last_seen_at", { ascending: false })
+          .limit(2_500),
+    options.includeGraph === false
+      ? emptyResult
+      : client
+          .from("graph_edges")
+          .select("*")
+          .eq("workspace_id", rows[0].workspace_id)
+          .order("strength", { ascending: false })
+          .limit(5_000),
   ]);
   fail(eventsResult.error);
   fail(identitiesResult.error);
@@ -635,6 +647,25 @@ export async function getCandidateBySlug(slug: string, workspace?: string | numb
   return data ? (await hydrate([data as CandidateRow]))[0] ?? null : null;
 }
 
+export async function getCandidateEvidenceById(
+  candidateId: string | number,
+  workspace?: string | number,
+) {
+  if (!hasSupabaseAdminEnv()) return null;
+  const numericId = Number(candidateId);
+  if (!Number.isSafeInteger(numericId) || numericId <= 0) return null;
+  const { data, error } = await db()
+    .from("candidates")
+    .select("*")
+    .eq("workspace_id", workspaceId(workspace))
+    .eq("id", numericId)
+    .maybeSingle();
+  fail(error);
+  return data
+    ? (await hydrate([data as CandidateRow], { includeGraph: false }))[0] ?? null
+    : null;
+}
+
 export async function searchCandidates(
   queryText: string,
   options: CandidateSearchOptions = {},
@@ -647,7 +678,8 @@ export async function searchCandidates(
       options.careerStages?.length ||
       options.eventTypes?.length ||
       options.locations?.length ||
-      options.sources?.length,
+      options.sources?.length ||
+      options.maxRecognition !== undefined,
   );
   const { data, error } = await db().rpc("hybrid_search_candidates", {
     p_workspace_id: workspaceId(workspace),
@@ -692,6 +724,12 @@ export async function searchCandidates(
   const sources = normalizedSet(options.sources);
   return ordered
     .filter((candidate) => candidate.score >= (options.minimumScore ?? 0))
+    .filter(
+      (candidate) =>
+        options.maxRecognition === undefined ||
+        Number(candidate.scoreComponents.publicRecognition ?? 0) <=
+          options.maxRecognition,
+    )
     .filter((candidate) => !statuses.size || statuses.has(candidate.status))
     .filter(
       (candidate) =>
@@ -727,6 +765,7 @@ const QUERY_LIMITS = new Map<string, number>([
   ["arxiv", 8],
   ["semantic-scholar", 8],
   ["hugging-face", 8],
+  ["exa-people", 8],
   ["x", 8],
 ]);
 
@@ -770,6 +809,7 @@ const MAX_ITEMS_BY_KIND = new Map<string, number>([
   ["science-fairs", 500],
   ["hackathons", 500],
   ["web-presence", 200],
+  ["exa-people", 100],
   ["x", 100],
   ["linkedin-manual", 100],
   ["brave-enrichment", 8],
@@ -1079,6 +1119,12 @@ function sourceSetupRequirement(row: SourceRow) {
       ? null
       : ("openalex_connection" as const);
   }
+  if (row.kind === "exa-people") {
+    if (!process.env.EXA_API_KEY?.trim()) return "exa_connection" as const;
+    return cleanStringArray(record(row.discovery_config).queries, 8, 500).length
+      ? null
+      : ("exa_queries" as const);
+  }
   if (row.kind === "x") {
     if (!process.env.X_BEARER_TOKEN?.trim()) return "x_connection" as const;
     if (process.env.X_DATA_USE_APPROVED !== "true") return "x_data_use_approval" as const;
@@ -1131,8 +1177,10 @@ function sourceConfigurationError(row: SourceRow, update: SourceConfigurationUpd
     if (update.queries.length > limit) {
       return `This source supports at most ${limit} search queries.`;
     }
-    if (kind === "hugging-face" && update.queries.length === 0) {
-      return "Add at least one Hugging Face topic.";
+    if ((kind === "hugging-face" || kind === "exa-people") && update.queries.length === 0) {
+      return kind === "hugging-face"
+        ? "Add at least one Hugging Face topic."
+        : "Add at least one Exa people search.";
     }
   }
   if (update.urls !== undefined && !URL_SOURCE_KINDS.has(kind)) {
@@ -2104,10 +2152,27 @@ function mapCriterion(row: CriterionProfileRow): CriterionProfile {
   const configuredDays = Array.isArray(digest.digestDaysOfWeek)
     ? digest.digestDaysOfWeek.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
     : [];
-  const signals: CriterionSignal[] = Array.isArray(weights.signals) ? (weights.signals as CriterionSignal[]) : Object.entries(weights).filter(([,v]) => typeof v === "number")
+  const storedSignals: CriterionSignal[] = Array.isArray(weights.signals) ? (weights.signals as CriterionSignal[]) : Object.entries(weights).filter(([,v]) => typeof v === "number")
     .map(([key,value]) => ({ key, label: key.replace(/([A-Z])/g," $1"), description:"", weight:Number(value), enabled:true }));
+  const signalByKey = new Map(storedSignals.map((signal) => [signal.key, signal]));
+  const signals = [
+    ...DEFAULT_CRITERION_SIGNALS.map((fallback) => ({
+      ...fallback,
+      ...signalByKey.get(fallback.key),
+      label: fallback.label,
+      description: fallback.description,
+    })),
+    ...storedSignals.filter(
+      (signal) => !DEFAULT_CRITERION_SIGNALS.some((fallback) => fallback.key === signal.key),
+    ),
+  ];
+  const characteristics = mergeCriterionCharacteristics(
+    Array.isArray(thresholds.characteristics)
+      ? (thresholds.characteristics as CriterionCharacteristic[])
+      : undefined,
+  );
   return { id:String(row.id), name:row.name, version:row.version, status:row.status as CriterionProfile["status"], lookForMarkdown:row.look_for_md,
-    avoidMarkdown:row.avoid_md, signals, minimumScore:parseMinimumScore(thresholds.minimumScore), minimumConfidence:Number(thresholds.minimumConfidence ?? .6),
+    avoidMarkdown:row.avoid_md, signals, characteristics, minimumScore:parseMinimumScore(thresholds.minimumScore), minimumConfidence:Number(thresholds.minimumConfidence ?? .6),
     weeklyCandidateCount:Number(digest.weeklyCandidateCount ?? 12), digestCadence:parseDigestCadence(digest.digestCadence), digestDaysOfWeek:configuredDays.length ? [...new Set(configuredDays)].sort((a,b)=>a-b) : [1], digestDeliveryHourUtc:Math.min(23, Math.max(0, Math.trunc(Number(digest.digestDeliveryHourUtc ?? 15)))), digestDeliveryMinuteUtc:[0,15,30,45].includes(Number(digest.digestDeliveryMinuteUtc)) ? Number(digest.digestDeliveryMinuteUtc) : 0, digestPreparationLeadHours:Math.min(12, Math.max(1, Math.trunc(Number(digest.digestPreparationLeadHours ?? 3)))), explorationRate:Number(row.exploration_rate), learningRate:Number(row.learning_rate),
     lastLearnedAt:row.update_origin === "learned" ? row.updated_at : null, trainingSampleCount:row.training_sample_count };
 }
@@ -2124,7 +2189,7 @@ export async function createCriterionProfileVersion(workspace: string | number, 
   const version=Number((latest.data?.[0] as Record<string,unknown>|undefined)?.version ?? 0)+1;
   const {data,error}=await client.from("criterion_profiles").insert({ workspace_id:wid,parent_id:current?.id ? Number(current.id):null,name:input.name ?? current?.name ?? "Unfound criterion",
     version,status:"draft",update_origin:input.origin ?? "human",look_for_md:input.lookForMarkdown ?? current?.lookForMarkdown ?? "",avoid_md:input.avoidMarkdown ?? current?.avoidMarkdown ?? "",
-    signal_weights:JSON.parse(JSON.stringify({signals:input.signals ?? current?.signals ?? []})) as Json,thresholds:{minimumScore:input.minimumScore ?? current?.minimumScore ?? 25,minimumConfidence:input.minimumConfidence ?? current?.minimumConfidence ?? .6},
+    signal_weights:JSON.parse(JSON.stringify({signals:input.signals ?? current?.signals ?? []})) as Json,thresholds:JSON.parse(JSON.stringify({minimumScore:input.minimumScore ?? current?.minimumScore ?? 25,minimumConfidence:input.minimumConfidence ?? current?.minimumConfidence ?? .6,characteristics:input.characteristics ?? current?.characteristics ?? mergeCriterionCharacteristics(undefined)})) as Json,
     digest_config:{weeklyCandidateCount:input.weeklyCandidateCount ?? current?.weeklyCandidateCount ?? 12,digestCadence:input.digestCadence ?? current?.digestCadence ?? "weekly",digestDaysOfWeek:input.digestDaysOfWeek ?? current?.digestDaysOfWeek ?? [1],digestDeliveryHourUtc:input.digestDeliveryHourUtc ?? current?.digestDeliveryHourUtc ?? 15,digestDeliveryMinuteUtc:input.digestDeliveryMinuteUtc ?? current?.digestDeliveryMinuteUtc ?? 0,digestPreparationLeadHours:input.digestPreparationLeadHours ?? current?.digestPreparationLeadHours ?? 3},learning_rate:input.learningRate ?? current?.learningRate ?? .01,
     exploration_rate:input.explorationRate ?? current?.explorationRate ?? .1,training_sample_count:input.trainingSampleCount ?? current?.trainingSampleCount ?? 0,
     change_summary:input.changeSummary,change_set:input.changeSet ?? {} }).select("*").single(); fail(error);

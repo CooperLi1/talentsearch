@@ -37,7 +37,8 @@ test("recommended query sets fit the shared eight-query execution budget", () =>
   }
   assert.equal(RECOMMENDED_TECHNICAL_COMPLEXITY_KEYWORDS.length, 30);
   assert.ok(RECOMMENDED_HACKER_NEWS_TOPICS.length >= 15);
-  assert.equal(VERIFIED_TECHNICAL_FEEDS.length, 5);
+  assert.equal(VERIFIED_TECHNICAL_FEEDS.length, 30);
+  assert.equal(new Set(VERIFIED_TECHNICAL_FEEDS).size, VERIFIED_TECHNICAL_FEEDS.length);
 });
 
 test("default connector settings carry every recommended query", () => {

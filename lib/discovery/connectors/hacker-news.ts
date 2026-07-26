@@ -173,7 +173,7 @@ export class HackerNewsConnector implements DiscoveryConnector {
       `https://hacker-news.firebaseio.com/v0/user/${handle}.json`,
       { signal: context.signal, rateLimitPerSecond: 8 },
     );
-    const ids = user.submitted?.slice(0, 30) ?? [];
+    const ids = user.submitted?.slice(0, 60) ?? [];
     const items = await mapLimit(ids, 8, async (id) =>
       fetchJson<HackerNewsItem>(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
         signal: context.signal,
@@ -203,6 +203,20 @@ export class HackerNewsConnector implements DiscoveryConnector {
         ? sanitizePlainText(user.about.replace(/<[^>]+>/g, " "), 2_000)
         : undefined,
     };
+    const activityCutoff = context.now.getTime() - 90 * 86_400_000;
+    const recentItems = items.filter((item) => {
+      const occurredAt = item?.time ? item.time * 1_000 : Number.NaN;
+      return Number.isFinite(occurredAt) && occurredAt >= activityCutoff;
+    });
+    const activeDays = new Set(
+      recentItems
+        .map((item) =>
+          item?.time
+            ? new Date(item.time * 1_000).toISOString().slice(0, 10)
+            : "",
+        )
+        .filter(Boolean),
+    ).size;
     const profile = createDiscoveryEvent({
       source: "hacker-news",
       sourceExternalId: `user:${user.id}:${user.karma ?? 0}`,
@@ -212,7 +226,12 @@ export class HackerNewsConnector implements DiscoveryConnector {
       occurredAt: user.created ? new Date(user.created * 1_000).toISOString() : undefined,
       sourceUrl: person.sourceUrl,
       person,
-      metrics: { karma: asNumber(user.karma), submissions: user.submitted?.length ?? 0 },
+      metrics: {
+        karma: asNumber(user.karma),
+        submissions: user.submitted?.length ?? 0,
+        hackerNewsActivity90d: recentItems.length,
+        hackerNewsActiveDays90d: activeDays,
+      },
       confidence: 0.98,
       now: context.now,
     });

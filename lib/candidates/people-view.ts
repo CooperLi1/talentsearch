@@ -5,9 +5,17 @@ import {
 } from "@/lib/candidates/operator-brief";
 import { preferredContactRoute } from "@/lib/contact/routes";
 import type { Candidate } from "@/lib/domain/types";
+import {
+  evaluateCandidateCharacteristics,
+  type CandidateCharacteristicMatch,
+} from "@/lib/criteria/characteristics";
 
 export type PeopleCandidateView = {
   confidence: number;
+  activityScore: number;
+  recognitionScore: number;
+  lastActivityAt: string;
+  characteristics: CandidateCharacteristicMatch[];
   contactRoute: { label: string; url: string } | null;
   domains: string[];
   eventTypes: string[];
@@ -32,6 +40,15 @@ export function toPeopleCandidateView(candidate: Candidate): PeopleCandidateView
   const contactRoute = preferredContactRoute(candidate.contactRoutes);
 
   return {
+    activityScore: Number(candidate.scoreComponents.activityVolume ?? 0),
+    recognitionScore: Number(candidate.scoreComponents.publicRecognition ?? 0),
+    lastActivityAt:
+      candidate.events
+        .map((event) => event.occurredAt ?? event.discoveredAt)
+        .filter(Boolean)
+        .sort()
+        .at(-1) ?? candidate.lastSeenAt,
+    characteristics: evaluateCandidateCharacteristics(candidate),
     confidence: candidate.confidence,
     contactRoute: contactRoute
       ? { label: contactRoute.label, url: contactRoute.url }

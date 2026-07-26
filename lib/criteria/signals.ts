@@ -3,6 +3,7 @@ import type { CriterionSignal } from "@/lib/domain/types";
 export const CRITERION_SIGNAL_KEYS = [
   "projectOriginality",
   "technicalComplexity",
+  "activityVolume",
   "trajectoryVelocity",
   "networkProximity",
   "achievementQuality",
@@ -13,13 +14,14 @@ export const CRITERION_SIGNAL_KEYS = [
 export type CriterionSignalKey = (typeof CRITERION_SIGNAL_KEYS)[number];
 
 export const DEFAULT_CRITERION_SIGNALS: CriterionSignal[] = [
-  { key: "projectOriginality", label: "Original work", description: "Evidence that someone built something original", weight: 0.2, enabled: true },
-  { key: "technicalComplexity", label: "Technical depth", description: "Difficulty and depth of the demonstrated work", weight: 0.18, enabled: true },
-  { key: "trajectoryVelocity", label: "Recent momentum", description: "Recent evidence of increasing ambition or output", weight: 0.17, enabled: true },
-  { key: "networkProximity", label: "External pull", description: "Independent use, collaboration, or trusted attention", weight: 0.14, enabled: true },
-  { key: "achievementQuality", label: "Achievement quality", description: "Difficulty and selectivity of a verified achievement", weight: 0.11, enabled: true },
-  { key: "evidenceDiversity", label: "Independent evidence", description: "Agreement across independent public sources", weight: 0.1, enabled: true },
-  { key: "earlyness", label: "Still early", description: "Strong work relative to current recognition", weight: 0.1, enabled: true },
+  { key: "projectOriginality", label: "Original work", description: "Evidence that someone built something original", weight: 0.17, enabled: true },
+  { key: "technicalComplexity", label: "Technical depth", description: "Difficulty and depth of the demonstrated work", weight: 0.16, enabled: true },
+  { key: "activityVolume", label: "Activity volume", description: "Sustained public output, even when it is not brand new", weight: 0.14, enabled: true },
+  { key: "trajectoryVelocity", label: "Recent momentum", description: "Recent evidence of increasing ambition or output", weight: 0.14, enabled: true },
+  { key: "networkProximity", label: "External pull", description: "Independent use, collaboration, or trusted attention", weight: 0.12, enabled: true },
+  { key: "achievementQuality", label: "Achievement quality", description: "Difficulty and selectivity of a verified achievement", weight: 0.09, enabled: true },
+  { key: "evidenceDiversity", label: "Independent evidence", description: "Agreement across independent public sources", weight: 0.09, enabled: true },
+  { key: "earlyness", label: "Still early", description: "Strong work relative to current recognition", weight: 0.09, enabled: true },
 ];
 
 export function signalsFromWeights(weights: Record<CriterionSignalKey, number>) {

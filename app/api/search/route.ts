@@ -21,6 +21,9 @@ export async function POST(request: Request) {
       {
         limit: input.limit,
         minimumScore,
+        maxRecognition:
+          input.filters?.maxRecognition ??
+          interpretedQuery.filters.maxRecognition,
         domains: skills,
         careerStages: input.filters?.careerStages ?? interpretedQuery.filters.careerStages,
         eventTypes: input.filters?.eventTypes ?? interpretedQuery.filters.eventTypes,

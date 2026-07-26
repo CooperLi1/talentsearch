@@ -41,7 +41,7 @@ async function mutate(request: Request) {
             changeSummary: "Updated dashboard tuning controls.",
             activate: true,
           }
-        : { ...input, signals: "signals" in input ? normalizeCriterionSignals(input.signals) : current?.signals, origin: "human", changeSummary: "Updated discovery criterion.", activate: true },
+        : { ...input, signals: "signals" in input ? normalizeCriterionSignals(input.signals) : current?.signals, characteristics: "characteristics" in input ? input.characteristics : current?.characteristics, origin: "human", changeSummary: "Updated deterministic discovery criterion.", activate: true },
     );
     return Response.json({ criterion });
   });

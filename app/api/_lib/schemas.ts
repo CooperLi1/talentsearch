@@ -276,7 +276,7 @@ export const searchRequestSchema = z.object({
         .max(8)
         .optional(),
       minScore: z.number().min(0).max(100).optional(),
-      maxRecognition: z.number().min(0).optional(),
+      maxRecognition: z.number().min(0).max(1).optional(),
     })
     .optional(),
 });
@@ -335,11 +335,13 @@ export const discoveryRunSchema = z.object({
         "rss",
         "technical-blogs",
         "project-launches",
+        "roster-page",
         "structured-results",
         "competition-results",
         "science-fairs",
         "hackathons",
         "web-presence",
+        "exa-people",
         "x",
         "linkedin-manual",
         "brave-enrichment",
@@ -349,6 +351,19 @@ export const discoveryRunSchema = z.object({
     .optional(),
   eventLimit: z.number().int().min(1).max(500).default(150),
 });
+
+export const deepDiveRunSchema = z
+  .object({
+    url: publicHttpUrlSchema,
+    maxPeople: z.number().int().min(1).max(500).default(500),
+    offset: z.number().int().min(0).max(499).default(0),
+    batchSize: z.number().int().min(1).max(50).default(25),
+  })
+  .strict()
+  .refine((value) => value.offset < value.maxPeople, {
+    message: "offset must be lower than maxPeople",
+    path: ["offset"],
+  });
 
 const sourceIdSchema = z.number().int().positive();
 
@@ -383,6 +398,32 @@ const fullSettingsSchema = z.object({
     )
     .min(1)
     .max(30),
+  characteristics: z
+    .array(
+      z
+        .object({
+          key: z.enum([
+            "explicitHighSchool",
+            "highSchoolTechInternship",
+            "ioiRecognition",
+            "targetSchool",
+            "githubHighActivity",
+            "hackerNewsHighActivity",
+            "lowXFollowers",
+            "activeButUndiscovered",
+          ]),
+          label: z.string().trim().min(1).max(120),
+          description: z.string().trim().max(500),
+          enabled: z.boolean(),
+          mode: z.enum(["prefer", "require"]),
+          threshold: z.number().min(0).max(100_000).optional(),
+          values: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+        })
+        .strict(),
+    )
+    .min(1)
+    .max(20)
+    .optional(),
 });
 
 const compactSettingsSchema = z.object({

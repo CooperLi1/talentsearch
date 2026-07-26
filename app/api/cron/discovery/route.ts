@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       // Discovery only locates and persists fresh public evidence. Research,
       // graph expansion, and model briefing have their own frequent workers.
       configuration: { ...configuration, enrichTopCandidates: 0 },
-      boundedEventLimit: 80,
+      boundedEventLimit: 120,
       graphExpansion: false,
       intelligenceRefreshLimit: 20,
       aiEventSummaryLimit: 0,

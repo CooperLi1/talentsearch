@@ -26,6 +26,8 @@ export interface SourceRecord {
 export type SourceSetupRequirement =
   | "openalex_connection"
   | "hugging_face_queries"
+  | "exa_connection"
+  | "exa_queries"
   | "x_connection"
   | "x_data_use_approval"
   | "x_queries"
@@ -272,6 +274,7 @@ export interface CriterionProfileVersionInput {
   lookForMarkdown?: string;
   avoidMarkdown?: string;
   signals?: CriterionSignal[];
+  characteristics?: import("@/lib/domain/types").CriterionCharacteristic[];
   minimumScore?: number;
   minimumConfidence?: number;
   weeklyCandidateCount?: number;

@@ -29,7 +29,7 @@ const parsedQuerySchema = z.object({
     careerStages: z.array(z.string().min(1).max(120)).max(10).optional(),
     eventTypes: z.array(z.enum(eventTypes)).max(10).optional(),
     minScore: z.number().min(0).max(100).optional(),
-    maxRecognition: z.number().min(0).optional(),
+    maxRecognition: z.number().min(0).max(1).optional(),
   }),
   sortIntent: z.enum(["relevance", "earlyness", "trajectory", "achievement"]),
   limit: z.number().int().min(1).max(100),
@@ -71,7 +71,7 @@ export async function parseTalentQuery(
     const { output } = await generateText({
       model,
       output: Output.object({ schema: parsedQuerySchema }),
-      system: `Translate a talent search into safe retrieval constraints. Never derive or filter by protected or sensitive traits. Do not add facts not present in the query. Keep the semantic query rich enough for embedding search.`,
+      system: `Translate a talent search into safe retrieval constraints. Never derive or filter by protected or sensitive traits. Do not add facts not present in the query. Keep the semantic query rich enough for embedding search. maxRecognition is a normalized 0–1 public-recognition index; lower values mean less publicly discovered.`,
       prompt: `Query: ${JSON.stringify(safeQuery)}\nRequested result count: ${requestedLimit}`,
       timeout: { totalMs: 20_000 },
       maxOutputTokens: 900,

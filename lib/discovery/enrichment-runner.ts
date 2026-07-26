@@ -50,8 +50,8 @@ export async function runEnrichmentShard(input: {
               ...brave,
               options: {
                 ...brave.options,
-                maxQueries: Math.min(3, Number(brave.options?.maxQueries ?? 3)),
-                maxResults: Math.min(5, Number(brave.options?.maxResults ?? 5)),
+                maxQueries: Math.min(5, Number(brave.options?.maxQueries ?? 5)),
+                maxResults: Math.min(10, Number(brave.options?.maxResults ?? 10)),
               },
             }
           : brave,

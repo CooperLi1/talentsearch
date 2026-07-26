@@ -11,6 +11,7 @@ import type { CriterionProfile } from "@/lib/domain/types";
 const priorityWeightsSchema = z.object({
   projectOriginality: z.number().min(0).max(1),
   technicalComplexity: z.number().min(0).max(1),
+  activityVolume: z.number().min(0).max(1),
   trajectoryVelocity: z.number().min(0).max(1),
   networkProximity: z.number().min(0).max(1),
   achievementQuality: z.number().min(0).max(1),
@@ -32,7 +33,7 @@ const EXAMPLES = [
       lookForMarkdown: "High school, university, and recent-graduate builders with public evidence of original systems, infrastructure, security, robotics, or scientific-computing work.",
       avoidMarkdown: "Do not prioritize credentials without inspectable work, tutorial clones, or people whose existing recognition already exceeds the evidence of recent output.",
       minimumScore: 28,
-      priorityWeights: { projectOriginality: 0.24, technicalComplexity: 0.26, trajectoryVelocity: 0.17, networkProximity: 0.08, achievementQuality: 0.08, evidenceDiversity: 0.09, earlyness: 0.08 },
+      priorityWeights: { projectOriginality: 0.21, technicalComplexity: 0.22, activityVolume: 0.14, trajectoryVelocity: 0.14, networkProximity: 0.07, achievementQuality: 0.07, evidenceDiversity: 0.08, earlyness: 0.07 },
     },
   },
   {
@@ -41,7 +42,7 @@ const EXAMPLES = [
       lookForMarkdown: "Early computational-biology and hardware builders with recent technical output, growing project scope, or credible collaboration around inspectable work.",
       avoidMarkdown: "Do not prioritize profiles supported only by affiliations, follower counts, or claims that cannot be traced to public evidence.",
       minimumScore: 12,
-      priorityWeights: { projectOriginality: 0.17, technicalComplexity: 0.18, trajectoryVelocity: 0.22, networkProximity: 0.18, achievementQuality: 0.06, evidenceDiversity: 0.1, earlyness: 0.09 },
+      priorityWeights: { projectOriginality: 0.14, technicalComplexity: 0.15, activityVolume: 0.16, trajectoryVelocity: 0.18, networkProximity: 0.15, achievementQuality: 0.05, evidenceDiversity: 0.09, earlyness: 0.08 },
     },
   },
 ] as const;

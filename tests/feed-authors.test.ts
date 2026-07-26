@@ -31,6 +31,16 @@ test("feed author extraction has a hard per-entry fan-out cap", () => {
   assert.equal(authors[7], "Author 8");
 });
 
+test("feed author extraction separates explicit multi-author bylines", () => {
+  assert.deepEqual(
+    extractFeedAuthors({
+      creator: "Andrew Cheung, Binoy Dash, Simran Jumani",
+    }),
+    ["Andrew Cheung", "Binoy Dash", "Simran Jumani"],
+  );
+  assert.deepEqual(extractFeedAuthors({ creator: "Smith, John" }), ["Smith, John"]);
+});
+
 test("feed results are interleaved fairly and stop at the global cap", () => {
   assert.deepEqual(
     interleaveFeedResults(

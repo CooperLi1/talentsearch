@@ -87,6 +87,15 @@ type GitHubSearchResponse = {
   items?: GitHubRepository[];
 };
 
+type GitHubPublicEvent = {
+  id: string;
+  type?: string;
+  created_at?: string;
+  payload?: {
+    size?: number;
+  };
+};
+
 type GitHubUser = GitHubOwner & {
   name?: string | null;
   bio?: string | null;
@@ -270,14 +279,24 @@ export class GitHubConnector implements DiscoveryConnector {
       rateLimitPerSecond: process.env.GITHUB_TOKEN ? 4 : 0.5,
       signal: context.signal,
     });
-    const repos = await fetchJson<GitHubRepository[]>(
-      `https://api.github.com/users/${login}/repos?sort=pushed&direction=desc&per_page=12&type=owner`,
-      {
-        headers: githubHeaders(),
-        rateLimitPerSecond: process.env.GITHUB_TOKEN ? 4 : 0.5,
-        signal: context.signal,
-      },
-    );
+    const [repos, publicEvents] = await Promise.all([
+      fetchJson<GitHubRepository[]>(
+        `https://api.github.com/users/${login}/repos?sort=pushed&direction=desc&per_page=30&type=owner`,
+        {
+          headers: githubHeaders(),
+          rateLimitPerSecond: process.env.GITHUB_TOKEN ? 4 : 0.5,
+          signal: context.signal,
+        },
+      ),
+      fetchJson<GitHubPublicEvent[]>(
+        `https://api.github.com/users/${login}/events/public?per_page=100`,
+        {
+          headers: githubHeaders(),
+          rateLimitPerSecond: process.env.GITHUB_TOKEN ? 4 : 0.5,
+          signal: context.signal,
+        },
+      ).catch(() => []),
+    ]);
     const ownedRepositories = excludeForkedRepositories(repos);
     const verifiedGitHubIdentity = githubIdentity(user);
     const pagesProfile = githubPagesProfile(user.login, ownedRepositories);
@@ -321,6 +340,19 @@ export class GitHubConnector implements DiscoveryConnector {
       websiteUrl,
       sourceUrl: user.html_url,
     };
+    const activityCutoff = context.now.getTime() - 90 * 86_400_000;
+    const recentPublicEvents = publicEvents.filter((event) => {
+      const occurredAt = Date.parse(event.created_at ?? "");
+      return Number.isFinite(occurredAt) && occurredAt >= activityCutoff;
+    });
+    const activeDays = new Set(
+      recentPublicEvents
+        .map((event) => event.created_at?.slice(0, 10))
+        .filter(Boolean),
+    ).size;
+    const pushedCommits = recentPublicEvents
+      .filter((event) => event.type === "PushEvent")
+      .reduce((total, event) => total + Math.max(1, asNumber(event.payload?.size)), 0);
 
     const profileEvent = createDiscoveryEvent({
       source: "github",
@@ -335,6 +367,9 @@ export class GitHubConnector implements DiscoveryConnector {
         followers: asNumber(user.followers),
         following: asNumber(user.following),
         publicRepositories: asNumber(user.public_repos),
+        githubPublicEvents90d: recentPublicEvents.length,
+        githubActiveDays90d: activeDays,
+        githubActivity90d: recentPublicEvents.length + Math.min(100, pushedCommits),
       },
       confidence: 0.98,
       now: context.now,

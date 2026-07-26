@@ -1,3 +1,4 @@
+import { RECOMMENDED_CONNECTOR_QUERIES } from "./config";
 import type { ConnectorSettings, EventType, SourceKind } from "./types";
 
 export type SourceCatalogEntry = {
@@ -165,7 +166,7 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     access: "public-feed",
     defaultEnabled: true,
     description: "Verified author-attributed RSS/Atom feeds for technical writing and research notes.",
-    configTemplate: { enabled: true, urls: [], maxItems: 60 },
+    configTemplate: { enabled: true, urls: [], maxItems: 120 },
   },
   {
     key: "personal-sites",
@@ -196,6 +197,21 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     defaultEnabled: true,
     description: "Builder launches and community recognition through the official Firebase API.",
     officialHome: "https://github.com/HackerNews/API",
+  },
+  {
+    key: "exa-people",
+    name: "Exa people discovery",
+    category: "community",
+    connector: "exa-people",
+    access: "official-api",
+    defaultEnabled: false,
+    description: "Natural-language discovery across Exa's multi-source people index. Results seed candidates for independent enrichment and verification.",
+    officialHome: "https://exa.ai/docs/reference/verticals/people",
+    configTemplate: {
+      enabled: false,
+      maxItems: 80,
+      queries: [...RECOMMENDED_CONNECTOR_QUERIES["exa-people"]],
+    },
   },
   {
     key: "x",

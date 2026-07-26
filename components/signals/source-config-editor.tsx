@@ -26,6 +26,7 @@ const querySources = new Set([
   "arxiv",
   "semantic-scholar",
   "hugging-face",
+  "exa-people",
   "x",
 ]);
 const urlSources = new Set(["technical-blogs", "personal-sites", "project-launches"]);
@@ -67,7 +68,11 @@ function isHttpUrl(value: string) {
 
 function sourceSummary(source: SignalSourceView, configuration: SourceConfigurationView) {
   if (querySources.has(source.key)) {
-    const noun = source.key === "x" ? "searches" : "topics";
+    const noun = source.key === "x"
+      ? "searches"
+      : source.key === "exa-people"
+        ? "people searches"
+        : "topics";
     return `${configuration.queries.length} ${noun}`;
   }
   if (urlSources.has(source.key)) return `${configuration.urls.length} sites`;
@@ -96,6 +101,13 @@ function queryCopy(key: string) {
       label: "Post searches",
       help: "One focused search per line. Broad searches tend to create more review work.",
       placeholder: '"built" robotics\n"open sourced" compiler\n"new paper" cryptography',
+    };
+  }
+  if (key === "exa-people") {
+    return {
+      label: "People searches",
+      help: "One natural-language search per line. Each search discovers new candidates; other sources then verify and enrich them.",
+      placeholder: "early-career compiler builders with substantial open-source work\nstudent robotics builders with public projects\nundiscovered scientific-computing contributors",
     };
   }
   if (key === "arxiv") {

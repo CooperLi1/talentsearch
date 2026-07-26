@@ -81,13 +81,32 @@ export function isCandidateIntroductionEvidence(event: DiscoveryEvent) {
     INTRODUCTION_SIGNAL.test(`${event.title} ${event.description ?? ""}`);
 }
 
-function briefEvidencePriority(event: DiscoveryEvent) {
-  if (isCandidateIntroductionEvidence(event)) return 100;
-  if (["competition_result", "hackathon_result", "fellowship_or_grant"].includes(event.type)) return 80;
-  if (event.type === "paper_published") return 70;
-  if (["project_momentum", "open_source_contribution"].includes(event.type)) return 60;
-  if (event.type === "project_created") return 50;
-  return 20;
+export function briefEvidencePriority(event: DiscoveryEvent) {
+  if (isCandidateIntroductionEvidence(event)) return 10_000;
+  const typePriority = {
+    competition_result: 800,
+    hackathon_result: 780,
+    fellowship_or_grant: 760,
+    paper_published: 700,
+    project_momentum: 620,
+    open_source_contribution: 600,
+    project_created: 500,
+    community_recognition: 360,
+    other: 240,
+    profile_observed: 120,
+    social_graph_signal: 80,
+  }[event.type] ?? 100;
+  const metrics = event.metrics ?? {};
+  const metricPriority =
+    Math.log1p(metrics.citations ?? 0) * 24 +
+    Math.log1p(metrics.stars ?? 0) * 18 +
+    Math.log1p(metrics.momentum ?? 0) * 12 +
+    (metrics.rank ? 120 / Math.sqrt(metrics.rank) : 0) +
+    (metrics.technicalComplexity ?? 0) * 90 +
+    (metrics.activityVolume ?? 0) * 50;
+  return Math.round(
+    typePriority + metricPriority + event.confidence * 40,
+  );
 }
 
 export function filterVerifiedOperatorFacts<T>(
@@ -438,6 +457,7 @@ export async function generateCandidateBrief(
     const briefEvidence = selectedBriefEvents.map((event, index) => ({
       evidenceId: `E${index + 1}`,
       publisher: evidenceGroup(event),
+      deterministicPriority: briefEvidencePriority(event),
       ...eventEvidence(event),
     }));
     if (!briefEvidence.length) return reject("no-substantive-evidence");
@@ -477,6 +497,15 @@ export async function generateCandidateBrief(
       );
     };
     const targetFactCount = Math.min(configuredBriefFactCount(), briefEvidence.length);
+    const deterministicAchievementEvidenceIds = [...briefEvidence]
+      .filter((item) => !introductionEvidenceIds.includes(item.evidenceId))
+      .sort(
+        (left, right) =>
+          right.deterministicPriority - left.deterministicPriority ||
+          left.evidenceId.localeCompare(right.evidenceId),
+      )
+      .slice(0, Math.max(1, targetFactCount - 1))
+      .map((item) => item.evidenceId);
     const requiresPublisherDiversity = new Set(
       briefEvidence.map((item) => item.publisher),
     ).size >= 2;
@@ -484,10 +513,10 @@ export async function generateCandidateBrief(
       `The operatorFacts field is the operator-facing brief: ${targetFactCount} facts with fixed jobs. Return fewer only when the supplied evidence cannot support them. Do not put Markdown in the fact text and never add filler to reach the target.`,
       "- Fact 1 is the background: who the person is — school, degree, current role, employer, or work history — using only facts in the evidence. Prefer licensed work-history and profile evidence here. If REQUIRED INTRODUCTION EVIDENCE is nonempty, this fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.",
       targetFactCount >= 4
-        ? "- The middle facts are the most impressive things they have done: the strongest things they built, published, won, or made happen, each stated with its concrete result, adoption, or recognition."
-        : "- Fact 2 is the most impressive thing they have done: the strongest thing they built, published, won, or made happen, stated with its concrete result, adoption, or recognition.",
+        ? "- The middle facts must follow DETERMINISTIC ACHIEVEMENT EVIDENCE in order. Use the earliest unused supported ID for each distinct fact; the ranking system, not the model, decides priority."
+        : "- Fact 2 must use the first supported ID in DETERMINISTIC ACHIEVEMENT EVIDENCE; the ranking system, not the model, decides priority.",
       targetFactCount >= 3
-        ? "- The final fact is the wild card: the most distinctive, surprising, or telling remaining detail — an unusual project, an odd combination of skills, early traction, or an outlier result — that a reader would remember. It must not restate the other facts."
+        ? "- The final fact uses the next highest-priority nonduplicate evidence ID. It must not restate another fact."
         : "",
     ].filter(Boolean).join("\n");
     const prompt = `Create an updated candidate brief for a nontechnical early-stage investor. The previous summary is context only and must not override current evidence.
@@ -525,7 +554,10 @@ REQUIRED INTRODUCTION EVIDENCE:
 ${JSON.stringify(introductionEvidenceIds)}
 
 REQUIRED RESEARCH FOCUS EVIDENCE:
-${JSON.stringify(researchFocusEvidenceIds)}`;
+${JSON.stringify(researchFocusEvidenceIds)}
+
+DETERMINISTIC ACHIEVEMENT EVIDENCE:
+${JSON.stringify(deterministicAchievementEvidenceIds)}`;
     let { output } = await generateText({
       model,
       output: Output.object({ schema: candidateSummaryGenerationSchema }),
@@ -551,7 +583,7 @@ Rules:
 - Remove appended interpretations such as "providing insights" or "facilitating entry." End the sentence after the supported capability or result.
 - Remove tails such as "improving reliability," "demonstrating practical applications," "highlighting skills," and "more effectively." They are commentary, not facts.
 - Translate "vision-language-action" into the concrete capability, such as AI that uses images and instructions to control a robot, when the evidence supports that description.
-- Target ${targetFactCount} distinct facts and preserve their jobs: background first, then the most impressive achievements, then the wild-card detail. Return fewer only if another fact would be filler or unsupported.
+- Target ${targetFactCount} distinct facts and preserve their jobs: background first, then achievements in DETERMINISTIC ACHIEVEMENT EVIDENCE order. Return fewer only if another fact would be filler or unsupported.
 - Do not put evidence IDs in the text.
 - When the evidence includes two or more publisher values, cite at least two different publisher values across the completed facts.
 - When two evidence records have the same work title but different publisher values, cite both IDs on a fact about that work.
@@ -566,7 +598,10 @@ REQUIRED INTRODUCTION EVIDENCE:
 ${JSON.stringify(introductionEvidenceIds)}
 
 REQUIRED RESEARCH FOCUS EVIDENCE:
-${JSON.stringify(researchFocusEvidenceIds)}`;
+${JSON.stringify(researchFocusEvidenceIds)}
+
+DETERMINISTIC ACHIEVEMENT EVIDENCE:
+${JSON.stringify(deterministicAchievementEvidenceIds)}`;
     let rewrite = await generateText({
       model,
       output: Output.object({ schema: operatorFactsGenerationSchema }),

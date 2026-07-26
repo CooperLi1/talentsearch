@@ -8,6 +8,7 @@ import {
   getAllSourceRecords,
   getDueSources,
   getActiveCriterionProfile,
+  getCandidateEvidenceById,
   getCandidateBySlug,
   insertCandidateEvent,
   listCandidates,
@@ -628,8 +629,7 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
   }
 
   async listCandidateEvents(workspaceId: string, candidateId: string) {
-    const candidates = await listCandidates({ limit: 500 }, workspaceId);
-    const candidate = candidates.find((item) => item.id === candidateId);
+    const candidate = await getCandidateEvidenceById(candidateId, workspaceId);
     if (!candidate) return [];
     const person = candidatePerson(candidate);
     return candidate.events.map((event) => domainEvent(event, person));
@@ -661,7 +661,10 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
       candidateId: input.candidateId,
       score: input.score.total,
       confidence: Math.max(0, 1 - input.score.confidencePenalty),
-      scoreComponents: input.score.features,
+      scoreComponents: {
+        ...input.score.features,
+        ...input.score.diagnostics,
+      },
       ...(input.sourceCount !== undefined ? { sourceCount: input.sourceCount } : {}),
       lastSeenAt: new Date().toISOString(),
       ...summaryUpdate,
@@ -704,6 +707,8 @@ export async function loadSourceConfiguration(workspaceId: string, dueOnly: bool
   const aliases: Record<string, string> = {
     originality: "projectOriginality",
     technical_complexity: "technicalComplexity",
+    activity: "activityVolume",
+    activity_volume: "activityVolume",
     velocity: "trajectoryVelocity",
     network: "networkProximity",
     achievement: "achievementQuality",
@@ -717,7 +722,7 @@ export async function loadSourceConfiguration(workspaceId: string, dueOnly: bool
   const enrichmentLimit = Number.isFinite(requestedEnrichmentLimit)
     ? Math.min(5, Math.max(0, Math.floor(requestedEnrichmentLimit)))
     : 5;
-  return parseDiscoveryConfiguration({
+  const configuration = parseDiscoveryConfiguration({
     connectors,
     minimumScore: profile?.minimumScore,
     scoringWeights,
@@ -725,4 +730,19 @@ export async function loadSourceConfiguration(workspaceId: string, dueOnly: bool
     // how many names fit in an email.
     enrichTopCandidates: enrichmentLimit,
   });
+  // Persisted source rows describe operator intent, but a credentialed
+  // connector is not runnable until its server-side secret actually exists.
+  if (!process.env.OPENALEX_API_KEY?.trim()) {
+    configuration.connectors.openalex = {
+      ...configuration.connectors.openalex,
+      enabled: false,
+    };
+  }
+  if (!process.env.EXA_API_KEY?.trim()) {
+    configuration.connectors["exa-people"] = {
+      ...configuration.connectors["exa-people"],
+      enabled: false,
+    };
+  }
+  return configuration;
 }

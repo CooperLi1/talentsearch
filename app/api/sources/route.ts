@@ -9,6 +9,8 @@ export const runtime = "nodejs";
 const setupMessages: Record<SourceSetupRequirement, string> = {
   openalex_connection: "Finish the OpenAlex connection before including this source.",
   hugging_face_queries: "Add at least one Hugging Face topic before including this source.",
+  exa_connection: "Add the Exa API key before including this source.",
+  exa_queries: "Add at least one Exa people search before including this source.",
   x_connection: "Finish the X connection before including this source.",
   x_data_use_approval: "Confirm the approved X data use before including this source.",
   x_queries: "Add at least one X search query before including this source.",

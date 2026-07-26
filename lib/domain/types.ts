@@ -243,6 +243,18 @@ export interface CriterionSignal {
   enabled: boolean;
 }
 
+export type CriterionCharacteristicMode = "prefer" | "require";
+
+export interface CriterionCharacteristic {
+  key: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  mode: CriterionCharacteristicMode;
+  threshold?: number;
+  values?: string[];
+}
+
 export type DigestCadence = "daily" | "twice_weekly" | "weekly" | "biweekly";
 
 export interface CriterionProfile {
@@ -253,6 +265,7 @@ export interface CriterionProfile {
   lookForMarkdown: string;
   avoidMarkdown: string;
   signals: CriterionSignal[];
+  characteristics: CriterionCharacteristic[];
   minimumScore: number;
   minimumConfidence: number;
   weeklyCandidateCount: number;
@@ -325,6 +338,7 @@ export interface DashboardData {
 export interface CandidateSearchOptions {
   limit?: number;
   minimumScore?: number;
+  maxRecognition?: number;
   statuses?: CandidateStatus[];
   domains?: string[];
   careerStages?: string[];

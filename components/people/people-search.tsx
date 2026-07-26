@@ -12,6 +12,7 @@ import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 
 type SelectedFacets = {
+  characteristics: string[];
   domains: string[];
   eventTypes: string[];
   locations: string[];
@@ -21,6 +22,7 @@ type SelectedFacets = {
 };
 
 const EMPTY_FACETS: SelectedFacets = {
+  characteristics: [],
   domains: [],
   eventTypes: [],
   locations: [],
@@ -74,6 +76,9 @@ export function PeopleSearch({
   const [searching, setSearching] = useState(false);
   const [remoteResults, setRemoteResults] = useState<PeopleCandidateView[] | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [sort, setSort] = useState<
+    "score" | "activity" | "recent" | "undiscovered"
+  >("score");
 
   const facets = useMemo(() => buildSearchFacetOptions(candidates), [candidates]);
   const selectedCount = Object.values(selected).reduce(
@@ -104,13 +109,32 @@ export function PeopleSearch({
       const sourceMatch = candidateMatchesFacet(candidate.sourceLabels, selected.sources);
       const stageMatch = candidateMatchesFacet([candidate.stage], selected.stages);
       const statusMatch = candidateMatchesFacet([candidate.status], selected.statuses);
-      return queryMatch && domainMatch && eventTypeMatch && locationMatch && sourceMatch && stageMatch && statusMatch;
+      const characteristicMatch = candidateMatchesFacet(
+        candidate.characteristics
+          .filter((characteristic) => characteristic.matched)
+          .map((characteristic) => characteristic.key),
+        selected.characteristics,
+      );
+      return queryMatch && characteristicMatch && domainMatch && eventTypeMatch && locationMatch && sourceMatch && stageMatch && statusMatch;
     });
 
-    return remoteResults === null
-      ? filtered.sort((a, b) => b.score - a.score)
-      : filtered;
-  }, [candidates, remoteResults, selected, submittedQuery]);
+    return filtered.sort((a, b) => {
+      if (sort === "activity") {
+        return b.activityScore - a.activityScore || b.score - a.score;
+      }
+      if (sort === "recent") {
+        return b.lastActivityAt.localeCompare(a.lastActivityAt) || b.score - a.score;
+      }
+      if (sort === "undiscovered") {
+        return (
+          a.recognitionScore - b.recognitionScore ||
+          b.activityScore - a.activityScore ||
+          b.score - a.score
+        );
+      }
+      return b.score - a.score;
+    });
+  }, [candidates, remoteResults, selected, sort, submittedQuery]);
 
   function toggleValue(key: keyof SelectedFacets, value: string) {
     setSelected((current) => ({
@@ -182,6 +206,7 @@ export function PeopleSearch({
         </div>
 
         <FilterGroup options={facets.eventTypes} selected={selected.eventTypes} title="Signal" onToggle={(value) => toggleValue("eventTypes", value)} />
+        <FilterGroup options={facets.characteristics} selected={selected.characteristics} title="Characteristic" onToggle={(value) => toggleValue("characteristics", value)} />
         <FilterGroup options={facets.sources} selected={selected.sources} title="Source" onToggle={(value) => toggleValue("sources", value)} />
         <FilterGroup options={facets.domains} selected={selected.domains} title="Focus area" onToggle={(value) => toggleValue("domains", value)} />
         <FilterGroup options={facets.stages} selected={selected.stages} title="Stage" onToggle={(value) => toggleValue("stages", value)} />
@@ -211,7 +236,27 @@ export function PeopleSearch({
 
         <div className="people-status">
           <span>{results.length} {results.length === 1 ? "person" : "people"}</span>
-          <span>{submittedQuery ? "Best evidence match first" : "Highest score first"}</span>
+          <label className="people-sort">
+            <span>Sort</span>
+            <select
+              aria-label="Sort people"
+              onChange={(event) =>
+                setSort(
+                  event.target.value as
+                    | "score"
+                    | "activity"
+                    | "recent"
+                    | "undiscovered",
+                )
+              }
+              value={sort}
+            >
+              <option value="score">Review score</option>
+              <option value="activity">Activity volume</option>
+              <option value="recent">Newest activity</option>
+              <option value="undiscovered">Most undiscovered</option>
+            </select>
+          </label>
         </div>
 
         {results.length ? (
@@ -257,6 +302,16 @@ export function PeopleSearch({
                   {candidate.identityWarning ? (
                     <small className="identity-warning">{candidate.identityWarning}</small>
                   ) : null}
+                  {candidate.characteristics.some((item) => item.matched) ? (
+                    <div className="person-characteristics" aria-label="Matched characteristics">
+                      {candidate.characteristics
+                        .filter((item) => item.matched)
+                        .slice(0, 3)
+                        .map((item) => (
+                          <span key={item.key}>{item.label}</span>
+                        ))}
+                    </div>
+                  ) : null}
                   {candidate.contactRoute ? (
                     <a
                       aria-label={`${candidate.contactRoute.label} for ${candidate.name}`}
@@ -271,6 +326,8 @@ export function PeopleSearch({
                 <div className="person-result-score">
                   <strong>{candidate.score.toFixed(1)}</strong>
                   <small>Review score</small>
+                  <span>Activity {Math.round(candidate.activityScore * 100)}</span>
+                  <span>Recognition {Math.round(candidate.recognitionScore * 100)}</span>
                   <span>Identity confidence {Math.round(candidate.confidence * 100)}%</span>
                 </div>
                 <div className="person-result-actions">

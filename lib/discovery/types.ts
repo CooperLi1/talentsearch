@@ -13,11 +13,13 @@ export const SOURCE_KINDS = [
   "rss",
   "technical-blogs",
   "project-launches",
+  "roster-page",
   "structured-results",
   "competition-results",
   "science-fairs",
   "hackathons",
   "web-presence",
+  "exa-people",
   "x",
   "linkedin-manual",
   "brave-enrichment",
@@ -162,6 +164,7 @@ export interface DiscoveryConnector {
 
 export type CandidateFeatureVector = {
   achievementQuality: number;
+  activityVolume: number;
   trajectoryVelocity: number;
   projectOriginality: number;
   technicalComplexity: number;
@@ -173,6 +176,12 @@ export type CandidateFeatureVector = {
 export type CandidateScore = {
   total: number;
   features: CandidateFeatureVector;
+  diagnostics: {
+    githubActivity: number;
+    hackerNewsActivity: number;
+    publicRecognition: number;
+    xFollowers: number;
+  };
   confidencePenalty: number;
   stalenessPenalty: number;
   explanations: string[];

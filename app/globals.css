@@ -979,6 +979,20 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.people-sort {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.people-sort select {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  text-transform: uppercase;
+}
+
 .people-results {
   display: grid;
 }
@@ -1032,6 +1046,24 @@ button:disabled {
 
 .person-result-facts {
   gap: 8px;
+}
+
+.person-characteristics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.person-characteristics span {
+  background: #e3e7d9;
+  border: 1px solid #c6cdb7;
+  color: #3f4931;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.48rem;
+  letter-spacing: 0.025em;
+  padding: 4px 6px;
+  text-transform: uppercase;
 }
 
 .person-brief-pending {
@@ -2349,6 +2381,17 @@ button:disabled {
   padding: 12px 14px;
 }
 
+.criteria-priority-name {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.criteria-priority-name input {
+  flex: 0 0 auto;
+  width: auto;
+}
+
 .criteria-priorities-heading {
   grid-column: 1 / -1;
 }
@@ -2373,6 +2416,225 @@ button:disabled {
 .criteria-priority-row input {
   accent-color: var(--electric);
   width: 100%;
+}
+
+.criteria-characteristics {
+  border: 1px solid var(--ink);
+  border-bottom: 0;
+  margin-top: 18px;
+}
+
+.criteria-characteristics > .criteria-priorities-heading {
+  border: 0;
+  border-bottom: 1px solid var(--ink);
+}
+
+.criteria-characteristic-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.criteria-characteristic {
+  border-bottom: 1px solid var(--ink);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  padding: 14px;
+}
+
+.criteria-characteristic:nth-child(odd) {
+  border-right: 1px solid var(--ink);
+}
+
+.criteria-characteristic-toggle {
+  align-items: flex-start;
+  display: flex;
+  gap: 9px;
+}
+
+.criteria-characteristic-toggle input {
+  accent-color: var(--electric);
+  margin-top: 3px;
+}
+
+.criteria-characteristic-toggle strong,
+.criteria-characteristic-toggle small {
+  display: block;
+}
+
+.criteria-characteristic-toggle strong {
+  font-size: 0.64rem;
+}
+
+.criteria-characteristic-toggle small {
+  color: var(--quiet);
+  font-size: 0.55rem;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+.criteria-characteristic > select,
+.criteria-characteristic textarea,
+.criteria-characteristic-threshold input {
+  background: var(--paper-bright);
+  border: 1px solid var(--hairline);
+  font: inherit;
+  font-size: 0.61rem;
+  padding: 8px;
+}
+
+.criteria-characteristic textarea,
+.criteria-characteristic-threshold {
+  grid-column: 1 / -1;
+}
+
+.criteria-characteristic-threshold {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.criteria-characteristic-threshold span {
+  color: var(--quiet);
+  font-size: 0.56rem;
+}
+
+/* Manual page research */
+.deep-dive-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.5fr);
+  margin-top: 28px;
+}
+
+.deep-dive-card,
+.deep-dive-result {
+  border: 1px solid var(--ink);
+}
+
+.deep-dive-card {
+  padding: 24px;
+}
+
+.deep-dive-card-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 15px;
+}
+
+.deep-dive-card-heading h2 {
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+}
+
+.deep-dive-card-heading p,
+.deep-dive-note,
+.deep-dive-result p {
+  color: var(--quiet);
+  font-size: 0.64rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.deep-dive-icon {
+  align-items: center;
+  background: var(--ink);
+  color: white;
+  display: flex;
+  flex: 0 0 38px;
+  height: 38px;
+  justify-content: center;
+}
+
+.deep-dive-icon svg {
+  height: 16px;
+  width: 16px;
+}
+
+.deep-dive-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  margin-top: 28px;
+}
+
+.deep-dive-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.deep-dive-form label span {
+  font-size: 0.59rem;
+  font-weight: 620;
+}
+
+.deep-dive-form input {
+  background: var(--paper-bright);
+  border: 1px solid var(--hairline);
+  font: inherit;
+  font-size: 0.68rem;
+  height: 42px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.deep-dive-note {
+  border-top: 1px solid var(--hairline);
+  margin-top: 20px;
+  padding-top: 14px;
+}
+
+.deep-dive-result {
+  align-content: start;
+  display: grid;
+}
+
+.deep-dive-result > div {
+  align-items: center;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.deep-dive-result > div span,
+.deep-dive-result > p,
+.deep-dive-result > a {
+  font-size: 0.58rem;
+}
+
+.deep-dive-result > div strong {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.deep-dive-result > p {
+  padding: 14px;
+}
+
+.deep-dive-result > a {
+  align-items: center;
+  border-top: 1px solid var(--hairline);
+  color: var(--electric);
+  display: flex;
+  gap: 6px;
+  padding: 14px;
+}
+
+.deep-dive-result > a svg {
+  height: 12px;
+  width: 12px;
+}
+
+.deep-dive-result-error {
+  border-color: var(--destructive);
+  color: var(--destructive);
+  padding: 18px;
+}
+
+.deep-dive-result-error p {
+  padding: 8px 0 0;
 }
 
 .setting-field-readonly {
@@ -2929,7 +3191,7 @@ button:disabled {
     border-top: 1px solid var(--hairline);
     bottom: 0;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     height: 58px;
     inset-inline: 0;
     position: fixed;
@@ -3250,6 +3512,27 @@ button:disabled {
     display: block;
   }
 
+  .criteria-characteristic-list,
+  .deep-dive-layout {
+    display: block;
+  }
+
+  .criteria-characteristic:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .deep-dive-result {
+    margin-top: 16px;
+  }
+
+  .deep-dive-form {
+    grid-template-columns: 1fr 120px;
+  }
+
+  .deep-dive-form button {
+    grid-column: 1 / -1;
+  }
+
   .criteria-drafter > textarea {
     display: block;
     margin-top: 16px;
@@ -3372,6 +3655,17 @@ button:disabled {
 }
 
 @media (max-width: 480px) {
+  .deep-dive-form,
+  .criteria-characteristic {
+    grid-template-columns: 1fr;
+  }
+
+  .criteria-characteristic > select,
+  .criteria-characteristic textarea,
+  .criteria-characteristic-threshold {
+    grid-column: 1;
+  }
+
   .login-form-wrap h1 {
     font-size: clamp(2.35rem, 12vw, 3.2rem);
     letter-spacing: -0.065em;

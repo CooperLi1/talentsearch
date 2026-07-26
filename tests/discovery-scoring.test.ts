@@ -54,6 +54,42 @@ test("profile observations do not create trajectory velocity", () => {
   assert.equal(score.features.trajectoryVelocity, 0);
 });
 
+test("sustained provider activity scores independently from recency", () => {
+  const score = scoreCandidate({
+    events: [
+      event(1, {
+        occurredAt: "2025-01-01T00:00:00.000Z",
+        type: "profile_observed",
+        metrics: {
+          publicRepositories: 88,
+          githubPublicEvents90d: 72,
+        },
+      }),
+    ],
+    now: new Date("2026-07-12T00:00:00.000Z"),
+  });
+
+  assert.ok(score.features.activityVolume >= 0.5);
+  assert.equal(score.features.trajectoryVelocity, 0);
+});
+
+test("public recognition is tracked separately from productive activity", () => {
+  const score = scoreCandidate({
+    events: [
+      event(1, {
+        source: "x",
+        sourceUrl: "https://x.com/example",
+        type: "profile_observed",
+        metrics: { followers: 5_000, posts: 12_000 },
+      }),
+    ],
+  });
+
+  assert.ok(score.features.activityVolume > 0.5);
+  assert.ok(score.diagnostics.publicRecognition > 0.8);
+  assert.equal(score.diagnostics.xFollowers, 5_000);
+});
+
 test("a search connector pointing to GitHub does not create source diversity", () => {
   const locatedGitHub = scoreCandidate({
     events: [

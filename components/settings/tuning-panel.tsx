@@ -67,6 +67,9 @@ export function TuningPanel({
   const [signals, setSignals] = useState(
     criterion.signals.length ? criterion.signals : DEFAULT_CRITERION_SIGNALS,
   );
+  const [characteristics, setCharacteristics] = useState(
+    criterion.characteristics,
+  );
   const [criteriaInstruction, setCriteriaInstruction] = useState("");
   const [draftingCriteria, setDraftingCriteria] = useState(false);
   const [criteriaDraftMessage, setCriteriaDraftMessage] = useState<string | null>(null);
@@ -93,6 +96,7 @@ export function TuningPanel({
     setDigestDeliveryMinuteUtc(criterion.digestDeliveryMinuteUtc);
     setDigestPreparationLeadHours(criterion.digestPreparationLeadHours);
     setSignals(criterion.signals.length ? criterion.signals : DEFAULT_CRITERION_SIGNALS);
+    setCharacteristics(criterion.characteristics);
     setCriteriaInstruction("");
     setCriteriaDraftMessage(null);
     setLearningEnabled(criterion.learningRate > 0);
@@ -119,6 +123,7 @@ export function TuningPanel({
           minimumConfidence: criterion.minimumConfidence,
           minimumScore,
           signals,
+          characteristics,
           weeklyCandidateCount: Number(candidateCount),
         }),
         headers: { "content-type": "application/json" },
@@ -268,9 +273,27 @@ export function TuningPanel({
             </div>
             {signals.map((signal) => (
               <label className="criteria-priority-row" key={signal.key}>
-                <span>{signal.label}</span>
+                <span className="criteria-priority-name">
+                  <input
+                    aria-label={`Include ${signal.label}`}
+                    checked={signal.enabled}
+                    onChange={(event) => {
+                      setSignals((current) =>
+                        current.map((item) =>
+                          item.key === signal.key
+                            ? { ...item, enabled: event.target.checked }
+                            : item,
+                        ),
+                      );
+                      setSaved(false);
+                    }}
+                    type="checkbox"
+                  />
+                  {signal.label}
+                </span>
                 <input
                   aria-label={`${signal.label} weight`}
+                  disabled={!signal.enabled}
                   max="1"
                   min="0"
                   onChange={(event) => {
@@ -285,6 +308,104 @@ export function TuningPanel({
                 <output>{Math.round(signal.weight * 100)}%</output>
               </label>
             ))}
+          </div>
+          <div className="criteria-characteristics">
+            <div className="criteria-priorities-heading">
+              <h3>Evidence characteristics</h3>
+              <p>
+                These are deterministic checks against cited fields and metrics.
+                Prefer changes ordering; require removes non-matches.
+              </p>
+            </div>
+            <div className="criteria-characteristic-list">
+              {characteristics.map((rule) => (
+                <div className="criteria-characteristic" key={rule.key}>
+                  <label className="criteria-characteristic-toggle">
+                    <input
+                      checked={rule.enabled}
+                      onChange={(event) => {
+                        setCharacteristics((current) =>
+                          current.map((item) =>
+                            item.key === rule.key
+                              ? { ...item, enabled: event.target.checked }
+                              : item,
+                          ),
+                        );
+                        setSaved(false);
+                      }}
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{rule.label}</strong>
+                      <small>{rule.description}</small>
+                    </span>
+                  </label>
+                  <select
+                    aria-label={`${rule.label} behavior`}
+                    disabled={!rule.enabled}
+                    onChange={(event) => {
+                      const mode =
+                        event.target.value === "require" ? "require" : "prefer";
+                      setCharacteristics((current) =>
+                        current.map((item) =>
+                          item.key === rule.key ? { ...item, mode } : item,
+                        ),
+                      );
+                      setSaved(false);
+                    }}
+                    value={rule.mode}
+                  >
+                    <option value="prefer">Prefer</option>
+                    <option value="require">Require</option>
+                  </select>
+                  {rule.key === "targetSchool" ? (
+                    <textarea
+                      aria-label="Target schools, one per line"
+                      disabled={!rule.enabled}
+                      onChange={(event) => {
+                        const values = event.target.value
+                          .split(/\n+/u)
+                          .map((value) => value.trim())
+                          .filter(Boolean)
+                          .slice(0, 50);
+                        setCharacteristics((current) =>
+                          current.map((item) =>
+                            item.key === rule.key ? { ...item, values } : item,
+                          ),
+                        );
+                        setSaved(false);
+                      }}
+                      placeholder={"Phillips Exeter Academy\nThomas Jefferson High School"}
+                      rows={3}
+                      value={(rule.values ?? []).join("\n")}
+                    />
+                  ) : null}
+                  {rule.key === "lowXFollowers" ? (
+                    <label className="criteria-characteristic-threshold">
+                      <span>Follower ceiling</span>
+                      <input
+                        disabled={!rule.enabled}
+                        min="0"
+                        max="100000"
+                        onChange={(event) => {
+                          const threshold = Number(event.target.value);
+                          setCharacteristics((current) =>
+                            current.map((item) =>
+                              item.key === rule.key
+                                ? { ...item, threshold }
+                                : item,
+                            ),
+                          );
+                          setSaved(false);
+                        }}
+                        type="number"
+                        value={rule.threshold ?? 500}
+                      />
+                    </label>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

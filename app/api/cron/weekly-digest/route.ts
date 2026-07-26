@@ -21,6 +21,11 @@ import {
 } from "@/lib/candidates/operator-brief";
 import { digestScheduleWindow } from "@/lib/digest/schedule";
 import { digestCandidateSnapshotCopy } from "@/lib/digest/candidate-snapshot";
+import { digestStatusAfterDelivery } from "@/lib/digest/delivery-state";
+import {
+  candidatePassesRequiredCharacteristics,
+  preferredCharacteristicCount,
+} from "@/lib/criteria/characteristics";
 import { sendWeeklyDigest } from "@/lib/email/send-weekly-digest";
 import type { DigestCandidate } from "@/lib/email/types";
 import type { Json } from "@/lib/supabase/database.types";
@@ -143,7 +148,7 @@ async function deliverDigestRecord(digest: DigestRecord, workspaceId: string) {
     });
     const sentAt = delivery.status === "sent" ? new Date().toISOString() : null;
     const finalizedDigest = await updateDigestDelivery(claimedDigest.id, workspaceId, {
-      status: delivery.status === "sent" ? "sent" : delivery.status === "failed" ? "failed" : "ready",
+      status: digestStatusAfterDelivery(delivery),
       recipientCount: delivery.recipientCount,
       sentAt,
       providerMessageId: delivery.status === "sent" ? delivery.batches[0]?.emailIds[0] ?? null : null,
@@ -252,7 +257,25 @@ export async function GET(request: Request) {
         Boolean(candidate) && hasGroundedOperatorBrief(candidate as NonNullable<typeof candidate>),
       )
       .filter((candidate) => hasIndependentEvidenceCoverage(candidate))
-      .filter((candidate) => hasIndependentOperatorBriefCoverage(candidate));
+      .filter((candidate) => hasIndependentOperatorBriefCoverage(candidate))
+      .filter((candidate) =>
+        candidatePassesRequiredCharacteristics(
+          candidate,
+          criterion?.characteristics ?? [],
+        ),
+      )
+      .sort(
+        (left, right) =>
+          preferredCharacteristicCount(
+            right,
+            criterion?.characteristics ?? [],
+          ) -
+            preferredCharacteristicCount(
+              left,
+              criterion?.characteristics ?? [],
+            ) ||
+          right.score - left.score,
+      );
     // One prolific source must not fill the digest. Cap each dominant
     // publisher, then backfill by rank only if the diverse pick runs short.
     const perPublisherCap = Math.max(2, Math.ceil(requestedCandidateCount / 3));

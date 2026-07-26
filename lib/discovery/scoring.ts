@@ -8,13 +8,14 @@ import { clamp } from "./connectors/shared";
 import { evidencePublisher } from "./evidence-publishers";
 
 export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
-  achievementQuality: 0.25,
-  trajectoryVelocity: 0.17,
-  projectOriginality: 0.14,
-  technicalComplexity: 0.15,
-  networkProximity: 0.12,
-  evidenceDiversity: 0.08,
-  earlyness: 0.09,
+  achievementQuality: 0.215,
+  activityVolume: 0.14,
+  trajectoryVelocity: 0.146,
+  projectOriginality: 0.12,
+  technicalComplexity: 0.129,
+  networkProximity: 0.103,
+  evidenceDiversity: 0.069,
+  earlyness: 0.078,
 };
 
 function maxMetric(events: DiscoveryEvent[], key: string) {
@@ -33,12 +34,19 @@ export function scoreCandidate(input: {
       total: 0,
       features: {
         achievementQuality: 0,
+        activityVolume: 0,
         trajectoryVelocity: 0,
         projectOriginality: 0,
         technicalComplexity: 0,
         networkProximity: 0,
         evidenceDiversity: 0,
         earlyness: 0,
+      },
+      diagnostics: {
+        githubActivity: 0,
+        hackerNewsActivity: 0,
+        publicRecognition: 0,
+        xFollowers: 0,
       },
       confidencePenalty: 1,
       stalenessPenalty: 1,
@@ -78,6 +86,39 @@ export function scoreCandidate(input: {
       Math.min(0.25, Math.log1p(momentum) / 3),
   );
 
+  const githubActivity = clamp(
+    Math.max(
+      maxMetric(events, "githubActivity90d") / 100,
+      maxMetric(events, "githubPublicEvents90d") / 100,
+      maxMetric(events, "publicRepositories") / 100,
+    ),
+  );
+  const hackerNewsActivity = clamp(
+    Math.log1p(
+      Math.max(
+        maxMetric(events, "hackerNewsActivity90d"),
+        maxMetric(events, "submissions"),
+      ),
+    ) / Math.log1p(1_000),
+  );
+  const xActivity = clamp(
+    Math.log1p(maxMetric(events, "posts")) / Math.log1p(20_000),
+  );
+  const observedActivity = clamp(
+    Math.log1p(
+      events.filter(
+        (event) =>
+          !["profile_observed", "social_graph_signal", "identity_observed"].includes(
+            event.type,
+          ),
+      ).length,
+    ) / Math.log1p(30),
+  );
+  const activityVolume = clamp(
+    Math.max(githubActivity, hackerNewsActivity, xActivity) * 0.72 +
+      observedActivity * 0.28,
+  );
+
   const buildEvents = events.filter((event) =>
     ["project_created", "project_momentum", "open_source_contribution"].includes(event.type),
   );
@@ -113,15 +154,46 @@ export function scoreCandidate(input: {
   );
   const evidenceDiversity = clamp(sources.size / 4 + Math.min(0.25, events.length / 40));
 
-  const followers = Math.max(maxMetric(events, "followers"), maxMetric(events, "friendOfCount"));
-  const recognition = Math.log10(Math.max(1, followers + maxMetric(events, "points") * 20));
-  const evidenceStrength = clamp(
-    (achievementQuality + projectOriginality + technicalComplexity + trajectoryVelocity) / 4,
+  const xFollowers = Math.max(
+    0,
+    ...events
+      .filter((event) => event.source === "x")
+      .map((event) => event.metrics?.followers ?? 0),
   );
-  const earlyness = clamp(0.78 + evidenceStrength * 0.2 - recognition * 0.18);
+  const githubFollowers = Math.max(
+    0,
+    ...events
+      .filter((event) => event.source === "github")
+      .map((event) => event.metrics?.followers ?? 0),
+  );
+  const hackerNewsKarma = Math.max(
+    0,
+    ...events
+      .filter((event) => event.source === "hacker-news")
+      .map((event) => event.metrics?.karma ?? 0),
+  );
+  const linkedInConnections = maxMetric(events, "linkedinConnections");
+  const publicRecognition = clamp(
+    Math.max(
+      Math.log1p(xFollowers) / Math.log1p(10_000),
+      Math.log1p(githubFollowers) / Math.log1p(5_000),
+      Math.log1p(hackerNewsKarma) / Math.log1p(50_000),
+      Math.log1p(linkedInConnections) / Math.log1p(5_000),
+    ),
+  );
+  const evidenceStrength = clamp(
+    (achievementQuality +
+      projectOriginality +
+      technicalComplexity +
+      trajectoryVelocity +
+      activityVolume) /
+      5,
+  );
+  const earlyness = clamp(0.78 + evidenceStrength * 0.2 - publicRecognition * 0.58);
 
   const features = {
     achievementQuality,
+    activityVolume,
     trajectoryVelocity,
     projectOriginality,
     technicalComplexity,
@@ -144,6 +216,7 @@ export function scoreCandidate(input: {
 
   const explanations: string[] = [];
   if (achievementQuality >= 0.5) explanations.push("Selective achievement or research evidence");
+  if (activityVolume >= 0.5) explanations.push("Sustained public activity across a provider");
   if (trajectoryVelocity >= 0.5) explanations.push("Several meaningful signals arrived recently");
   if (projectOriginality >= 0.45) explanations.push("Repeated evidence of building or open-source work");
   if (technicalComplexity >= 0.5) explanations.push("Repository structure indicates meaningful technical depth");
@@ -151,5 +224,17 @@ export function scoreCandidate(input: {
   if (evidenceDiversity >= 0.5) explanations.push(`Corroborated across ${sources.size} sources`);
   if (earlyness >= 0.65) explanations.push("Strong signal relative to current public recognition");
 
-  return { total, features, confidencePenalty, stalenessPenalty, explanations };
+  return {
+    total,
+    features,
+    diagnostics: {
+      githubActivity,
+      hackerNewsActivity,
+      publicRecognition,
+      xFollowers,
+    },
+    confidencePenalty,
+    stalenessPenalty,
+    explanations,
+  };
 }

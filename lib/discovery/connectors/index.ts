@@ -2,6 +2,7 @@ import type { DiscoveryConnector, SourceKind } from "../types";
 import { ArxivConnector } from "./arxiv";
 import { CodeforcesConnector } from "./codeforces";
 import { CrossrefConnector } from "./crossref";
+import { ExaPeopleConnector } from "./exa-people";
 import { FeedConnector } from "./feed";
 import { GitHubConnector } from "./github";
 import { GitLabConnector } from "./gitlab";
@@ -10,6 +11,7 @@ import { HuggingFaceConnector } from "./hugging-face";
 import { LinkedInManualConnector } from "./linkedin-manual";
 import { OpenAlexConnector } from "./openalex";
 import { PeopleDataLabsConnector } from "./people-data-labs";
+import { RosterPageConnector } from "./roster-page";
 import { SemanticScholarConnector } from "./semantic-scholar";
 import { StructuredResultsConnector } from "./structured-results";
 import { XConnector } from "./x";
@@ -22,6 +24,7 @@ export function createConnectorRegistry(): Map<SourceKind, DiscoveryConnector> {
     new GitLabConnector(),
     new OpenAlexConnector(),
     new CrossrefConnector(),
+    new ExaPeopleConnector(),
     new ArxivConnector(),
     new SemanticScholarConnector(),
     new CodeforcesConnector(),
@@ -30,6 +33,7 @@ export function createConnectorRegistry(): Map<SourceKind, DiscoveryConnector> {
     new FeedConnector(),
     new FeedConnector("technical-blogs", "Technical blog feeds"),
     new FeedConnector("project-launches", "Project launch feeds", "project_momentum"),
+    new RosterPageConnector(),
     new StructuredResultsConnector(),
     new StructuredResultsConnector(
       "competition-results",
@@ -55,6 +59,7 @@ export {
   ArxivConnector,
   CodeforcesConnector,
   CrossrefConnector,
+  ExaPeopleConnector,
   FeedConnector,
   GitHubConnector,
   GitLabConnector,
@@ -63,6 +68,7 @@ export {
   LinkedInManualConnector,
   OpenAlexConnector,
   PeopleDataLabsConnector,
+  RosterPageConnector,
   SemanticScholarConnector,
   StructuredResultsConnector,
   XConnector,

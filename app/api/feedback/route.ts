@@ -30,7 +30,7 @@ const statusMap: Partial<Record<string, CandidateStatus>> = {
 };
 
 function featureVector(value: Record<string, number>): CandidateFeatureVector | null {
-  const keys: Array<keyof CandidateFeatureVector> = ["achievementQuality", "trajectoryVelocity", "projectOriginality", "technicalComplexity", "networkProximity", "evidenceDiversity", "earlyness"];
+  const keys: Array<keyof CandidateFeatureVector> = ["achievementQuality", "activityVolume", "trajectoryVelocity", "projectOriginality", "technicalComplexity", "networkProximity", "evidenceDiversity", "earlyness"];
   if (!keys.some((key) => Number.isFinite(value[key]))) return null;
   return Object.fromEntries(keys.map((key) => [key, Number.isFinite(value[key]) ? value[key] : 0])) as CandidateFeatureVector;
 }
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
           profile.signals.map((signal) => [signal.key, signal.weight]),
         ) as Partial<CandidateFeatureVector>;
         const learned = updateTasteWeights({
-          current: { achievementQuality: current.achievementQuality ?? .25, trajectoryVelocity: current.trajectoryVelocity ?? .17,
+          current: { achievementQuality: current.achievementQuality ?? .215, activityVolume: current.activityVolume ?? .14, trajectoryVelocity: current.trajectoryVelocity ?? .146,
             projectOriginality: current.projectOriginality ?? .14, technicalComplexity: current.technicalComplexity ?? .15,
             networkProximity: current.networkProximity ?? .12, evidenceDiversity: current.evidenceDiversity ?? .08, earlyness: current.earlyness ?? .09 },
           feedback,

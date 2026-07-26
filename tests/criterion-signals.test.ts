@@ -7,6 +7,7 @@ test("AI priority weights are normalized deterministically", () => {
   const signals = signalsFromWeights({
     projectOriginality: 2,
     technicalComplexity: 2,
+    activityVolume: 2,
     trajectoryVelocity: 1,
     networkProximity: 1,
     achievementQuality: 1,
@@ -14,7 +15,7 @@ test("AI priority weights are normalized deterministically", () => {
     earlyness: 2,
   });
   assert.equal(Number(signals.reduce((sum, signal) => sum + signal.weight, 0).toFixed(4)), 1);
-  assert.equal(signals.find((signal) => signal.key === "technicalComplexity")?.weight, 0.2);
+  assert.equal(signals.find((signal) => signal.key === "technicalComplexity")?.weight, 0.1667);
 });
 
 test("disabled review signals receive no saved weight", () => {

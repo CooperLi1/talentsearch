@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   attachEquivalentPublisherCitations,
+  briefEvidencePriority,
   filterVerifiedOperatorFacts,
   hasUnsupportedAgencyClaim,
   isSubstantiveBriefEvent,
@@ -77,6 +78,24 @@ test("brief evidence interleaves publishers before repeating one", () => {
     selectDiverseBriefEvidence([githubEvents[0], braveGitHub, research], 3)
       .map((item) => item.source),
     ["github", "semantic-scholar", "brave-enrichment"],
+  );
+});
+
+test("brief achievement priority is deterministic from event type and metrics", () => {
+  const competition: DiscoveryEvent = {
+    ...event,
+    type: "competition_result",
+    metrics: { rank: 3 },
+  };
+  const popularRepository: DiscoveryEvent = {
+    ...event,
+    type: "project_created",
+    metrics: { stars: 5_000 },
+  };
+
+  assert.ok(
+    briefEvidencePriority(competition) >
+      briefEvidencePriority(popularRepository),
   );
 });
 

@@ -24,6 +24,7 @@ export const STATUS_LABELS: Record<string, string> = {
 };
 
 export type SearchFacetCandidate = {
+  characteristics?: Array<{ key: string; label: string; matched: boolean }>;
   domains: string[];
   eventTypes: string[];
   location: string;
@@ -39,6 +40,7 @@ export type SearchFacetOption = {
 };
 
 export type SearchFacetOptions = {
+  characteristics: SearchFacetOption[];
   domains: SearchFacetOption[];
   eventTypes: SearchFacetOption[];
   locations: SearchFacetOption[];
@@ -77,6 +79,22 @@ export function buildSearchFacetOptions(
   candidates: SearchFacetCandidate[],
 ): SearchFacetOptions {
   return {
+    characteristics: countOptions(
+      candidates.flatMap((candidate) =>
+        (candidate.characteristics ?? [])
+          .filter((characteristic) => characteristic.matched)
+          .map((characteristic) => characteristic.key),
+      ),
+      20,
+      Object.fromEntries(
+        candidates.flatMap((candidate) =>
+          (candidate.characteristics ?? []).map((characteristic) => [
+            characteristic.key,
+            characteristic.label,
+          ]),
+        ),
+      ),
+    ),
     domains: countOptions(candidates.flatMap((candidate) => candidate.domains), 12),
     eventTypes: countOptions(
       candidates.flatMap((candidate) => [...new Set(candidate.eventTypes)]),
