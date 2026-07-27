@@ -18,6 +18,10 @@
   terminal state. Leaving an empty or recipient-less job `ready` makes the oldest
   item monopolize every dispatcher invocation and prevents later schedules from
   being evaluated.
+- Retry wrappers can hide non-retryable provider failures such as exhausted
+  quota. Extract the nested status and provider code, surface a failing worker
+  invocation, and never treat a system-wide billing or authentication failure as
+  hundreds of independent candidate-quality failures.
 
 ## Discovery throughput
 

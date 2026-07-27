@@ -1,5 +1,10 @@
 import { generateText, Output } from "ai";
 
+import {
+  isModelProviderUnavailable,
+  modelCallFailure,
+  ModelProviderUnavailableError,
+} from "@/lib/ai/model-call-error";
 import type { CandidateScore, DiscoveryEvent, PersonObservation } from "@/lib/discovery/types";
 import { configuredBriefFactCount } from "@/lib/candidates/brief-policy";
 import { sanitizePlainText } from "@/lib/discovery/security";
@@ -956,13 +961,15 @@ ${JSON.stringify(researchFocusEvidenceIds)}`,
     if (!summary) return reject("render-contract");
     return { ...output, summary };
   } catch (error) {
+    const failure = modelCallFailure(error);
     console.error("Candidate brief model call failed", {
-      errorName: error instanceof Error ? error.name : "unknown",
-      statusCode:
-        error && typeof error === "object" && "statusCode" in error
-          ? Number((error as { statusCode?: unknown }).statusCode) || undefined
-          : undefined,
+      errorName: failure.name,
+      statusCode: failure.statusCode ?? undefined,
+      errorCode: failure.code ?? undefined,
     });
+    if (isModelProviderUnavailable(failure)) {
+      throw new ModelProviderUnavailableError(failure);
+    }
     return null;
   }
 }

@@ -3,6 +3,7 @@ import {
   DEFAULT_EMBEDDING_MODEL,
   embedCandidateTexts,
 } from "@/lib/ai/embeddings";
+import { ModelProviderUnavailableError } from "@/lib/ai/model-call-error";
 import {
   candidateBriefContractIssues,
   fallbackCandidateSummary,
@@ -240,8 +241,9 @@ export async function runCandidateBriefBatch(input: {
           summary: summary.summary,
         }),
       };
-    } catch {
+    } catch (error) {
       await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+      if (error instanceof ModelProviderUnavailableError) throw error;
       return null;
     }
   });
