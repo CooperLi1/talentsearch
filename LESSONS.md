@@ -22,6 +22,10 @@
   quota. Extract the nested status and provider code, surface a failing worker
   invocation, and never treat a system-wide billing or authentication failure as
   hundreds of independent candidate-quality failures.
+- Treat model, prompt version, and evidence fingerprints as provenance rather
+  than automatic queue invalidation. Historical regeneration must be an
+  explicit, separately budgeted backfill so a metadata change cannot silently
+  fan out across the full candidate table.
 
 ## Discovery throughput
 

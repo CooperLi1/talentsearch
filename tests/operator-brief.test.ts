@@ -138,6 +138,20 @@ test("grounded AI briefs replace deterministic event-title bullets", () => {
   assert.ok(buildOperatorBrief(result).every((fact) => fact.sources[0]?.url === compilerEvent.sourceUrl));
 });
 
+test("grounded briefs remain usable after the prompt policy changes", () => {
+  const result = candidate({
+    briefPolicyVersion: "operator-v38",
+    summaryMarkdown: [
+      "- Builds compilers for constrained devices. [GitHub](https://github.com/example/compiler)",
+      "- Published reproducible measurements for the implementation. [Repository](https://github.com/example/compiler)",
+    ].join("\n"),
+    events: [event({})],
+  });
+
+  assert.equal(hasGroundedOperatorBrief(result), true);
+  assert.equal(buildOperatorBrief(result).length, 2);
+});
+
 test("brief links not present in stored evidence are rejected", () => {
   const result = candidate({
     summaryMarkdown: [

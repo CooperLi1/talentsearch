@@ -1,5 +1,5 @@
 import type { Candidate, EvidenceLink, TalentEvent } from "@/lib/domain/types";
-import { configuredBriefFactCount, CURRENT_CANDIDATE_BRIEF_POLICY } from "./brief-policy";
+import { configuredBriefFactCount } from "./brief-policy";
 
 export type OperatorBriefSource = Pick<EvidenceLink, "label" | "url">;
 
@@ -151,7 +151,6 @@ export function dominantEvidencePublisher(candidate: Candidate) {
 }
 
 function groundedSummaryFacts(candidate: Candidate): OperatorBriefFact[] {
-  if (candidate.briefPolicyVersion !== CURRENT_CANDIDATE_BRIEF_POLICY) return [];
   const allowedSources = new Map<string, OperatorBriefSource>();
   for (const event of candidate.events) {
     for (const source of safeSources(event)) {
