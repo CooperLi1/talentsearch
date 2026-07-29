@@ -10,6 +10,7 @@ import {
   isCandidateIntroductionEvidence,
   isGroundedCandidateBrief,
   needsPlainLanguageRetry,
+  operatorBriefStructureRules,
   selectDiverseBriefEvidence,
 } from "@/lib/ai/summaries";
 import { operatorFactsGenerationSchema } from "@/lib/ai/schemas";
@@ -191,6 +192,19 @@ test("configured brief fact count clamps to a sane range", async () => {
     if (previous === undefined) delete process.env.CANDIDATE_BRIEF_FACT_COUNT;
     else process.env.CANDIDATE_BRIEF_FACT_COUNT = previous;
   }
+});
+
+test("brief structure preserves background, achievement, and wildcard jobs", () => {
+  const twoFacts = operatorBriefStructureRules(2);
+  const threeFacts = operatorBriefStructureRules(3);
+  const fiveFacts = operatorBriefStructureRules(5);
+
+  assert.match(twoFacts, /Fact 1 is the background/);
+  assert.match(twoFacts, /Fact 2 is the most impressive thing/);
+  assert.doesNotMatch(twoFacts, /final fact is the wild card/);
+  assert.match(threeFacts, /final fact is the wild card/);
+  assert.match(threeFacts, /must not restate the background or achievements/);
+  assert.match(fiveFacts, /middle facts are the most impressive things/);
 });
 
 test("plain-language review catches implementation jargon and filler", () => {

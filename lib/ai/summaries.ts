@@ -361,6 +361,20 @@ export function isGroundedCandidateBrief(
   return candidateBriefContractIssues(summaryMarkdown, events).length === 0;
 }
 
+export function operatorBriefStructureRules(targetFactCount: number) {
+  const boundedFactCount = Math.min(5, Math.max(2, Math.floor(targetFactCount)));
+  return [
+    `The operatorFacts field is the operator-facing brief: ${boundedFactCount} facts with fixed jobs. Return fewer only when the supplied evidence cannot support them. Do not put Markdown in the fact text and never add filler to reach the target.`,
+    "- Fact 1 is the background: who the person is — school, degree, current role, employer, or work history — using only facts in the evidence. Prefer licensed work-history and profile evidence here. If REQUIRED INTRODUCTION EVIDENCE is nonempty, this fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.",
+    boundedFactCount >= 4
+      ? "- The middle facts are the most impressive things they have done: the strongest things they built, published, won, or made happen, each stated with its concrete result, adoption, or recognition. Prefer earlier supported IDs from RANKED ACHIEVEMENT EVIDENCE."
+      : "- Fact 2 is the most impressive thing they have done: the strongest thing they built, published, won, or made happen, stated with its concrete result, adoption, or recognition. Prefer the earliest supported ID from RANKED ACHIEVEMENT EVIDENCE.",
+    boundedFactCount >= 3
+      ? "- The final fact is the wild card: the most distinctive, surprising, or telling remaining detail — an unusual project, an odd combination of skills, early traction, or an outlier result — that a reader would remember. It must not restate the background or achievements."
+      : "",
+  ].filter(Boolean).join("\n");
+}
+
 export function fallbackEventSummary(event: DiscoveryEvent): EventSummary {
   return {
     headline: sanitizePlainText(event.title, 160),
@@ -502,28 +516,18 @@ export async function generateCandidateBrief(
       );
     };
     const targetFactCount = Math.min(configuredBriefFactCount(), briefEvidence.length);
-    const deterministicAchievementEvidenceIds = [...briefEvidence]
+    const rankedAchievementEvidenceIds = [...briefEvidence]
       .filter((item) => !introductionEvidenceIds.includes(item.evidenceId))
       .sort(
         (left, right) =>
           right.deterministicPriority - left.deterministicPriority ||
           left.evidenceId.localeCompare(right.evidenceId),
       )
-      .slice(0, Math.max(1, targetFactCount - 1))
       .map((item) => item.evidenceId);
     const requiresPublisherDiversity = new Set(
       briefEvidence.map((item) => item.publisher),
     ).size >= 2;
-    const briefStructureRules = [
-      `The operatorFacts field is the operator-facing brief: ${targetFactCount} facts with fixed jobs. Return fewer only when the supplied evidence cannot support them. Do not put Markdown in the fact text and never add filler to reach the target.`,
-      "- Fact 1 is the background: who the person is — school, degree, current role, employer, or work history — using only facts in the evidence. Prefer licensed work-history and profile evidence here. If REQUIRED INTRODUCTION EVIDENCE is nonempty, this fact must cite at least one of those evidence IDs and include the stated role, affiliation, or field.",
-      targetFactCount >= 4
-        ? "- The middle facts must follow DETERMINISTIC ACHIEVEMENT EVIDENCE in order. Use the earliest unused supported ID for each distinct fact; the ranking system, not the model, decides priority."
-        : "- Fact 2 must use the first supported ID in DETERMINISTIC ACHIEVEMENT EVIDENCE; the ranking system, not the model, decides priority.",
-      targetFactCount >= 3
-        ? "- The final fact uses the next highest-priority nonduplicate evidence ID. It must not restate another fact."
-        : "",
-    ].filter(Boolean).join("\n");
+    const briefStructureRules = operatorBriefStructureRules(targetFactCount);
     const prompt = `Create an updated candidate brief for a nontechnical early-stage investor. The previous summary is context only and must not override current evidence.
 
 ${briefStructureRules}
@@ -561,8 +565,8 @@ ${JSON.stringify(introductionEvidenceIds)}
 REQUIRED RESEARCH FOCUS EVIDENCE:
 ${JSON.stringify(researchFocusEvidenceIds)}
 
-DETERMINISTIC ACHIEVEMENT EVIDENCE:
-${JSON.stringify(deterministicAchievementEvidenceIds)}`;
+RANKED ACHIEVEMENT EVIDENCE:
+${JSON.stringify(rankedAchievementEvidenceIds)}`;
     let { output } = await generateText({
       model,
       output: Output.object({ schema: candidateSummaryGenerationSchema }),
@@ -588,7 +592,8 @@ Rules:
 - Remove appended interpretations such as "providing insights" or "facilitating entry." End the sentence after the supported capability or result.
 - Remove tails such as "improving reliability," "demonstrating practical applications," "highlighting skills," and "more effectively." They are commentary, not facts.
 - Translate "vision-language-action" into the concrete capability, such as AI that uses images and instructions to control a robot, when the evidence supports that description.
-- Target ${targetFactCount} distinct facts and preserve their jobs: background first, then achievements in DETERMINISTIC ACHIEVEMENT EVIDENCE order. Return fewer only if another fact would be filler or unsupported.
+- Target ${targetFactCount} distinct facts and preserve their fixed jobs: background first, the most impressive achievement or achievements in the middle, and the memorable wild-card detail last when there are at least three facts. Return fewer only if another fact would be filler or unsupported.
+- Do not turn the final wild card into merely the next ranked achievement. It should be a different, distinctive detail supported by the evidence.
 - Do not put evidence IDs in the text.
 - When the evidence includes two or more publisher values, cite at least two different publisher values across the completed facts.
 - When two evidence records have the same work title but different publisher values, cite both IDs on a fact about that work.
@@ -605,8 +610,8 @@ ${JSON.stringify(introductionEvidenceIds)}
 REQUIRED RESEARCH FOCUS EVIDENCE:
 ${JSON.stringify(researchFocusEvidenceIds)}
 
-DETERMINISTIC ACHIEVEMENT EVIDENCE:
-${JSON.stringify(deterministicAchievementEvidenceIds)}`;
+RANKED ACHIEVEMENT EVIDENCE:
+${JSON.stringify(rankedAchievementEvidenceIds)}`;
     let rewrite = await generateText({
       model,
       output: Output.object({ schema: operatorFactsGenerationSchema }),
@@ -731,9 +736,11 @@ ${JSON.stringify(briefEvidence)}`,
         model,
         output: Output.object({ schema: operatorFactsGenerationSchema }),
         system: GROUNDING_RULES,
-        prompt: `Write up to five short, conservative facts for a generalist investor. Return at least two and aim for five when the evidence supports them.
+        prompt: `Write up to five short, conservative facts for a generalist investor. Return at least two and aim for ${targetFactCount} when the evidence supports them.
 
 The prior facts failed a strict evidence check. Start again from the public evidence, not from the prior wording.
+- Preserve the fixed jobs: background first; strongest achievement or achievements in the middle; and, when returning at least three facts, a distinctive wild-card detail last.
+- The wild card must reveal something different and memorable. It must not be merely the next ranked achievement or a restatement of another fact.
 - Each fact must state only a capability, result, role, affiliation, publication, award, or number explicitly present in its cited evidence.
 - Use at most 20 ordinary words per fact.
 - Do not interpret unfamiliar project or model names. Omit them unless the name itself matters.
@@ -783,9 +790,11 @@ ${JSON.stringify(briefEvidence)}`,
           model,
           output: Output.object({ schema: operatorFactsGenerationSchema }),
           system: GROUNDING_RULES,
-          prompt: `Propose two short replacement facts for a generalist investor. Existing verified facts are included only to prevent duplication.
+          prompt: `Propose two short replacement facts for a generalist investor. Existing verified facts are included only to prevent duplication and to preserve the brief's fixed jobs.
 
 - Use a different achievement, publication, award, role, or concrete result from the evidence.
+- If the background is missing, propose a grounded background fact.
+- If a brief with at least three facts is missing its wild card, propose a distinctive, memorable detail that is not merely another ranked achievement.
 - Use at most 20 ordinary words per fact.
 - Do not claim the person led, founded, organized, or owned anything unless the cited evidence explicitly uses that role.
 - If evidence says the person joined a team and the team won, state the award without changing participation into leadership.

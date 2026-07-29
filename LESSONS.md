@@ -26,6 +26,9 @@
   than automatic queue invalidation. Historical regeneration must be an
   explicit, separately budgeted backfill so a metadata change cannot silently
   fan out across the full candidate table.
+- Deterministic evidence ranking must not replace the product meaning of each
+  brief slot. Use ranking to choose the strongest achievement, while preserving
+  distinct background and wildcard jobs throughout rewrite and repair prompts.
 
 ## Discovery throughput
 
