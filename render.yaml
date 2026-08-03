@@ -30,7 +30,7 @@ services:
       - key: AI_MODEL
         value: gpt-4o-mini
       - key: AI_SUMMARY_MODEL
-        value: gpt-4o-mini
+        value: gpt-5.6-luna
       - key: OPENAI_EMBEDDING_MODEL
         value: text-embedding-3-small
       - key: WORKER_ENRICHMENT_CONCURRENCY

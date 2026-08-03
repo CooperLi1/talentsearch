@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractRosterPeople } from "../lib/discovery/connectors/roster-page";
+import {
+  extractRosterPeople,
+  extractRosterPeopleFromText,
+} from "../lib/discovery/connectors/roster-page";
 
 test("extracts names, rank, country, and recognition from an IOI-style table", () => {
   const people = extractRosterPeople(
@@ -55,6 +58,53 @@ test("extracts names, rank, country, and recognition from an IOI-style table", (
 test("does not treat navigation links as roster people", () => {
   const people = extractRosterPeople(
     `<nav><a href="/people/search">People Search</a></nav>`,
+    "https://example.com/results",
+  );
+
+  assert.deepEqual(people, []);
+});
+
+test("extracts IOI-style roster rows from Exa cached markdown", () => {
+  const people = extractRosterPeopleFromText(
+    `
+| Rank | Contestant | Country | Scores | Award |
+| --- | --- | --- | --- | --- |
+| 1 | [Hengxi Liu](/people/1001) | China | 591.23 | Gold |
+| 2 | [Mingyu Woo](/people/1002) | Republic of Korea | 574.78 | Gold |
+    `,
+    "https://stats.ioinformatics.org/results/2025",
+  );
+
+  assert.deepEqual(
+    people.map((person) => ({
+      affiliation: person.affiliation,
+      name: person.name,
+      profileUrl: person.profileUrl,
+      rank: person.rank,
+      recognition: person.recognition?.toLocaleLowerCase("en-US"),
+    })),
+    [
+      {
+        affiliation: "China",
+        name: "Hengxi Liu",
+        profileUrl: "https://stats.ioinformatics.org/people/1001",
+        rank: 1,
+        recognition: "gold",
+      },
+      {
+        affiliation: "Republic of Korea",
+        name: "Mingyu Woo",
+        profileUrl: "https://stats.ioinformatics.org/people/1002",
+        rank: 2,
+        recognition: "gold",
+      },
+    ],
+  );
+});
+
+test("cached markdown requires a labeled person column", () => {
+  const people = extractRosterPeopleFromText(
+    `| Label | Value |\n| --- | --- |\n| Winner | Results Page |`,
     "https://example.com/results",
   );
 

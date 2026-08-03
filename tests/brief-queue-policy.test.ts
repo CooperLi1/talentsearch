@@ -18,10 +18,9 @@ test("brief claims are limited to candidates without a generated brief", () => {
   assert.match(migration, /for update of candidates skip locked/);
 });
 
-test("the continuous brief worker uses the lower-cost direct OpenAI model", () => {
+test("the continuous brief worker uses Luna for cohesive summaries", () => {
   assert.match(
     renderBlueprint,
-    /- key: AI_SUMMARY_MODEL\s+value: gpt-4o-mini/,
+    /- key: AI_SUMMARY_MODEL\s+value: gpt-5\.6-luna/,
   );
-  assert.doesNotMatch(renderBlueprint, /gpt-5\.6-luna/);
 });
