@@ -2429,6 +2429,21 @@ button:disabled {
   border-bottom: 1px solid var(--ink);
 }
 
+.criteria-characteristics-heading {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.criteria-characteristics-heading > div {
+  max-width: 680px;
+}
+
+.criteria-characteristics-heading .editorial-button {
+  flex: 0 0 auto;
+}
+
 .criteria-characteristic-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2473,31 +2488,87 @@ button:disabled {
   margin-top: 4px;
 }
 
-.criteria-characteristic > select,
-.criteria-characteristic textarea,
-.criteria-characteristic-threshold input {
+.criteria-characteristic-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+}
+
+.criteria-characteristic-remove {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  color: var(--quiet);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.criteria-characteristic-remove:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.criteria-characteristic-remove svg {
+  height: 13px;
+  width: 13px;
+}
+
+.criteria-characteristic-field {
+  display: grid;
+  gap: 5px;
+}
+
+.criteria-characteristic-field > span {
+  color: var(--quiet);
+  font-size: 0.54rem;
+}
+
+.criteria-characteristic-field-wide {
+  grid-column: 1 / -1;
+}
+
+.criteria-characteristic-field input,
+.criteria-characteristic-field select,
+.criteria-characteristic-field textarea {
   background: var(--paper-bright);
   border: 1px solid var(--hairline);
   font: inherit;
   font-size: 0.61rem;
   padding: 8px;
+  width: 100%;
 }
 
-.criteria-characteristic textarea,
-.criteria-characteristic-threshold {
-  grid-column: 1 / -1;
+.criteria-characteristic-field textarea {
+  line-height: 1.45;
+  resize: vertical;
 }
 
-.criteria-characteristic-threshold {
-  align-items: center;
+.criteria-characteristic-field [aria-invalid="true"] {
+  border-color: #a63c2f;
+}
+
+.criteria-characteristic-empty {
+  align-items: flex-start;
   display: flex;
-  gap: 10px;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 5px;
+  padding: 24px;
 }
 
-.criteria-characteristic-threshold span {
+.criteria-characteristic-empty strong {
+  font-size: 0.66rem;
+}
+
+.criteria-characteristic-empty span {
   color: var(--quiet);
-  font-size: 0.56rem;
+  font-size: 0.59rem;
+  line-height: 1.5;
 }
 
 /* Manual page research */
@@ -3551,6 +3622,15 @@ button:disabled {
     border-right: 1px solid var(--ink);
   }
 
+  .criteria-characteristics-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .criteria-characteristics-heading .editorial-button {
+    align-self: flex-start;
+  }
+
   .criteria-priority-row {
     width: 100%;
   }
@@ -3660,9 +3740,7 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .criteria-characteristic > select,
-  .criteria-characteristic textarea,
-  .criteria-characteristic-threshold {
+  .criteria-characteristic-field-wide {
     grid-column: 1;
   }
 

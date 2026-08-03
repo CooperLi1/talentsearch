@@ -45,3 +45,9 @@
   batches and handed to the existing enrichment queue. Running every external
   lookup inside one web request makes useful large pages fail at serverless
   duration limits.
+
+## Operator-owned configuration
+
+- A missing operator-defined collection should map to an empty collection, not
+  be repopulated with product defaults on every read. Otherwise users cannot
+  intentionally keep the collection empty or fully own its contents.

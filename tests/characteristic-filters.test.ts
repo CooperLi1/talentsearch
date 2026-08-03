@@ -66,8 +66,31 @@ test("matches explicit evidence characteristics without inferring age", () => {
       },
     ],
   });
+  const rules = [
+    {
+      key: "explicitHighSchool",
+      label: "Explicitly in high school",
+      description: "",
+      enabled: true,
+      mode: "prefer" as const,
+    },
+    {
+      key: "ioiRecognition",
+      label: "IOI recognition",
+      description: "",
+      enabled: true,
+      mode: "prefer" as const,
+    },
+    {
+      key: "activeButUndiscovered",
+      label: "Active but undiscovered",
+      description: "",
+      enabled: true,
+      mode: "prefer" as const,
+    },
+  ];
   const matches = new Map(
-    evaluateCandidateCharacteristics(input).map((match) => [
+    evaluateCandidateCharacteristics(input, rules).map((match) => [
       match.key,
       match.matched,
     ]),
@@ -78,12 +101,71 @@ test("matches explicit evidence characteristics without inferring age", () => {
   assert.equal(matches.get("activeButUndiscovered"), true);
 });
 
-test("required deterministic characteristics exclude nonmatches", () => {
-  const rules = mergeCriterionCharacteristics(undefined).map((rule) =>
-    rule.key === "ioiRecognition"
-      ? { ...rule, enabled: true, mode: "require" as const }
-      : rule,
+test("starts with no evidence characteristics", () => {
+  assert.deepEqual(mergeCriterionCharacteristics(undefined), []);
+  assert.deepEqual(evaluateCandidateCharacteristics(candidate()), []);
+});
+
+test("custom characteristics can match all or any operator-defined evidence terms", () => {
+  const input = candidate({
+    headline: "Robotics builder",
+    biography: "Built an autonomous rover while attending high school.",
+  });
+  const matches = evaluateCandidateCharacteristics(input, [
+    {
+      key: "custom_robotics_builder",
+      label: "High-school robotics builder",
+      description: "",
+      enabled: true,
+      mode: "prefer",
+      evidenceMatch: "all",
+      values: ["high school", "autonomous rover"],
+    },
+    {
+      key: "custom_competition",
+      label: "Competition experience",
+      description: "",
+      enabled: true,
+      mode: "prefer",
+      evidenceMatch: "any",
+      values: ["IOI", "robotics"],
+    },
+  ]);
+
+  assert.deepEqual(matches.map((match) => match.matched), [true, true]);
+});
+
+test("custom evidence terms match whole words rather than substrings", () => {
+  const matches = evaluateCandidateCharacteristics(
+    candidate({ biography: "Started a robotics company." }),
+    [
+      {
+        key: "custom_art",
+        label: "Art",
+        description: "",
+        enabled: true,
+        mode: "prefer",
+        evidenceMatch: "all",
+        values: ["art"],
+      },
+    ],
   );
+
+  assert.equal(matches[0]?.matched, false);
+});
+
+test("required custom characteristics exclude nonmatches", () => {
+  const rules = [
+    {
+      key: "custom_ioi_winner",
+      label: "IOI winner",
+      description: "",
+      enabled: true,
+      mode: "require" as const,
+      evidenceMatch: "all" as const,
+      values: ["IOI", "winner"],
+    },
+  ];
 
   assert.equal(candidatePassesRequiredCharacteristics(candidate(), rules), false);
 });

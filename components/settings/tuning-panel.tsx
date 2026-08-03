@@ -3,8 +3,12 @@
 import { SubscriberManager, type SubscriberView } from "@/components/settings/subscriber-manager";
 import { SettingsSectionNav } from "@/components/settings/settings-section-nav";
 import { DEFAULT_CRITERION_SIGNALS } from "@/lib/criteria/signals";
-import type { CriterionProfile, DiscoverySource } from "@/lib/domain/types";
-import { Check, RotateCcw, Save, Sparkles } from "lucide-react";
+import type {
+  CriterionCharacteristic,
+  CriterionProfile,
+  DiscoverySource,
+} from "@/lib/domain/types";
+import { Check, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 const qualityOptions = [
@@ -31,6 +35,29 @@ const deliveryDays = [
   { label: "Sat", value: 6 },
   { label: "Sun", value: 0 },
 ];
+
+const legacyCharacteristicKeys = new Set([
+  "explicitHighSchool",
+  "highSchoolTechInternship",
+  "ioiRecognition",
+  "targetSchool",
+  "githubHighActivity",
+  "hackerNewsHighActivity",
+  "lowXFollowers",
+  "activeButUndiscovered",
+]);
+
+function newCharacteristic(): CriterionCharacteristic {
+  return {
+    key: `custom_${crypto.randomUUID().replaceAll("-", "")}`,
+    label: "",
+    description: "",
+    enabled: true,
+    mode: "prefer",
+    evidenceMatch: "all",
+    values: [],
+  };
+}
 
 export function TuningPanel({
   criterion,
@@ -105,6 +132,21 @@ export function TuningPanel({
   }
 
   async function saveSettings() {
+    const invalidRule = characteristics.find(
+      (rule) =>
+        !rule.label.trim() ||
+        (rule.enabled &&
+          !legacyCharacteristicKeys.has(rule.key) &&
+          !rule.values?.length),
+    );
+    if (invalidRule) {
+      setSaveError(
+        !invalidRule.label.trim()
+          ? "Name every evidence characteristic before saving."
+          : `Add at least one evidence term to ${invalidRule.label}.`,
+      );
+      return;
+    }
     setSaving(true);
     setSaved(false);
     setSaveError(null);
@@ -310,102 +352,188 @@ export function TuningPanel({
             ))}
           </div>
           <div className="criteria-characteristics">
-            <div className="criteria-priorities-heading">
-              <h3>Evidence characteristics</h3>
-              <p>
-                These are deterministic checks against cited fields and metrics.
-                Prefer changes ordering; require removes non-matches.
-              </p>
+            <div className="criteria-priorities-heading criteria-characteristics-heading">
+              <div>
+                <h3>Evidence characteristics</h3>
+                <p>
+                  Create your own checks using words or exact phrases that must
+                  appear in cited evidence. Prefer changes ordering; require
+                  removes non-matches.
+                </p>
+              </div>
+              <button
+                className="editorial-button editorial-button-light"
+                disabled={characteristics.length >= 20}
+                onClick={() => {
+                  setCharacteristics((current) => [
+                    ...current,
+                    newCharacteristic(),
+                  ]);
+                  setSaved(false);
+                  setSaveError(null);
+                }}
+                type="button"
+              >
+                <Plus aria-hidden="true" /> Add characteristic
+              </button>
             </div>
-            <div className="criteria-characteristic-list">
-              {characteristics.map((rule) => (
-                <div className="criteria-characteristic" key={rule.key}>
-                  <label className="criteria-characteristic-toggle">
-                    <input
-                      checked={rule.enabled}
-                      onChange={(event) => {
-                        setCharacteristics((current) =>
-                          current.map((item) =>
-                            item.key === rule.key
-                              ? { ...item, enabled: event.target.checked }
-                              : item,
-                          ),
-                        );
-                        setSaved(false);
-                      }}
-                      type="checkbox"
-                    />
-                    <span>
-                      <strong>{rule.label}</strong>
-                      <small>{rule.description}</small>
-                    </span>
-                  </label>
-                  <select
-                    aria-label={`${rule.label} behavior`}
-                    disabled={!rule.enabled}
-                    onChange={(event) => {
-                      const mode =
-                        event.target.value === "require" ? "require" : "prefer";
-                      setCharacteristics((current) =>
-                        current.map((item) =>
-                          item.key === rule.key ? { ...item, mode } : item,
-                        ),
-                      );
-                      setSaved(false);
-                    }}
-                    value={rule.mode}
-                  >
-                    <option value="prefer">Prefer</option>
-                    <option value="require">Require</option>
-                  </select>
-                  {rule.key === "targetSchool" ? (
-                    <textarea
-                      aria-label="Target schools, one per line"
-                      disabled={!rule.enabled}
-                      onChange={(event) => {
-                        const values = event.target.value
-                          .split(/\n+/u)
-                          .map((value) => value.trim())
-                          .filter(Boolean)
-                          .slice(0, 50);
-                        setCharacteristics((current) =>
-                          current.map((item) =>
-                            item.key === rule.key ? { ...item, values } : item,
-                          ),
-                        );
-                        setSaved(false);
-                      }}
-                      placeholder={"Phillips Exeter Academy\nThomas Jefferson High School"}
-                      rows={3}
-                      value={(rule.values ?? []).join("\n")}
-                    />
-                  ) : null}
-                  {rule.key === "lowXFollowers" ? (
-                    <label className="criteria-characteristic-threshold">
-                      <span>Follower ceiling</span>
+            {characteristics.length ? (
+              <div className="criteria-characteristic-list">
+                {characteristics.map((rule) => (
+                  <div className="criteria-characteristic" key={rule.key}>
+                    <div className="criteria-characteristic-header">
+                      <label className="criteria-characteristic-toggle">
+                        <input
+                          aria-label={`Enable ${rule.label || "new characteristic"}`}
+                          checked={rule.enabled}
+                          onChange={(event) => {
+                            setCharacteristics((current) =>
+                              current.map((item) =>
+                                item.key === rule.key
+                                  ? { ...item, enabled: event.target.checked }
+                                  : item,
+                              ),
+                            );
+                            setSaved(false);
+                          }}
+                          type="checkbox"
+                        />
+                        <span>
+                          <strong>{rule.label || "New characteristic"}</strong>
+                          <small>{rule.enabled ? "Included in ranking" : "Paused"}</small>
+                        </span>
+                      </label>
+                      <button
+                        aria-label={`Remove ${rule.label || "new characteristic"}`}
+                        className="criteria-characteristic-remove"
+                        onClick={() => {
+                          setCharacteristics((current) =>
+                            current.filter((item) => item.key !== rule.key),
+                          );
+                          setSaved(false);
+                          setSaveError(null);
+                        }}
+                        type="button"
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    </div>
+                    <label className="criteria-characteristic-field">
+                      <span>Name</span>
                       <input
-                        disabled={!rule.enabled}
-                        min="0"
-                        max="100000"
+                        aria-invalid={!rule.label.trim()}
+                        maxLength={120}
                         onChange={(event) => {
-                          const threshold = Number(event.target.value);
                           setCharacteristics((current) =>
                             current.map((item) =>
                               item.key === rule.key
-                                ? { ...item, threshold }
+                                ? { ...item, label: event.target.value }
+                                : item,
+                            ),
+                          );
+                          setSaved(false);
+                          setSaveError(null);
+                        }}
+                        placeholder="High-school robotics builder"
+                        type="text"
+                        value={rule.label}
+                      />
+                    </label>
+                    <label className="criteria-characteristic-field">
+                      <span>Behavior</span>
+                      <select
+                        disabled={!rule.enabled}
+                        onChange={(event) => {
+                          const mode = event.target.value === "require" ? "require" : "prefer";
+                          setCharacteristics((current) =>
+                            current.map((item) =>
+                              item.key === rule.key ? { ...item, mode } : item,
+                            ),
+                          );
+                          setSaved(false);
+                        }}
+                        value={rule.mode}
+                      >
+                        <option value="prefer">Prefer matches</option>
+                        <option value="require">Require a match</option>
+                      </select>
+                    </label>
+                    <label className="criteria-characteristic-field criteria-characteristic-field-wide">
+                      <span>Evidence terms · one word or phrase per line</span>
+                      <textarea
+                        aria-invalid={
+                          rule.enabled &&
+                          !legacyCharacteristicKeys.has(rule.key) &&
+                          !rule.values?.length
+                        }
+                        disabled={!rule.enabled}
+                        maxLength={10_000}
+                        onChange={(event) => {
+                          const values = event.target.value
+                            .split(/\n+/u)
+                            .map((value) => value.trim())
+                            .filter(Boolean)
+                            .slice(0, 50);
+                          setCharacteristics((current) =>
+                            current.map((item) =>
+                              item.key === rule.key ? { ...item, values } : item,
+                            ),
+                          );
+                          setSaved(false);
+                          setSaveError(null);
+                        }}
+                        placeholder={"high school\nrobotics\nbuilt"}
+                        rows={3}
+                        value={(rule.values ?? []).join("\n")}
+                      />
+                    </label>
+                    <label className="criteria-characteristic-field">
+                      <span>Term matching</span>
+                      <select
+                        disabled={!rule.enabled}
+                        onChange={(event) => {
+                          const evidenceMatch = event.target.value === "any" ? "any" : "all";
+                          setCharacteristics((current) =>
+                            current.map((item) =>
+                              item.key === rule.key ? { ...item, evidenceMatch } : item,
+                            ),
+                          );
+                          setSaved(false);
+                        }}
+                        value={rule.evidenceMatch ?? "all"}
+                      >
+                        <option value="all">Match all terms</option>
+                        <option value="any">Match any term</option>
+                      </select>
+                    </label>
+                    <label className="criteria-characteristic-field">
+                      <span>Note · optional</span>
+                      <input
+                        maxLength={500}
+                        onChange={(event) => {
+                          setCharacteristics((current) =>
+                            current.map((item) =>
+                              item.key === rule.key
+                                ? { ...item, description: event.target.value }
                                 : item,
                             ),
                           );
                           setSaved(false);
                         }}
-                        type="number"
-                        value={rule.threshold ?? 500}
+                        placeholder="Why this matters to the search"
+                        type="text"
+                        value={rule.description}
                       />
                     </label>
-                  ) : null}
-                </div>
-              ))}
-            </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="criteria-characteristic-empty">
+                <strong>No evidence characteristics yet.</strong>
+                <span>Add one when you want a precise cited-evidence preference or requirement.</span>
+              </div>
+            )}
           </div>
         </section>
 

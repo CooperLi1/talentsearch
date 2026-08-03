@@ -372,6 +372,17 @@ export const sourceUpdateSchema = z.union([
   z.object({ id: sourceIdSchema, config: editableSourceConfigSchema }).strict(),
 ]);
 
+const legacyCharacteristicKeys = new Set([
+  "explicitHighSchool",
+  "highSchoolTechInternship",
+  "ioiRecognition",
+  "targetSchool",
+  "githubHighActivity",
+  "hackerNewsHighActivity",
+  "lowXFollowers",
+  "activeButUndiscovered",
+]);
+
 const fullSettingsSchema = z.object({
   lookForMarkdown: z.string().max(10_000),
   avoidMarkdown: z.string().max(10_000),
@@ -402,27 +413,41 @@ const fullSettingsSchema = z.object({
     .array(
       z
         .object({
-          key: z.enum([
-            "explicitHighSchool",
-            "highSchoolTechInternship",
-            "ioiRecognition",
-            "targetSchool",
-            "githubHighActivity",
-            "hackerNewsHighActivity",
-            "lowXFollowers",
-            "activeButUndiscovered",
-          ]),
+          key: z.string().trim().min(1).max(80).regex(/^[a-z][a-zA-Z0-9_-]*$/),
           label: z.string().trim().min(1).max(120),
           description: z.string().trim().max(500),
           enabled: z.boolean(),
           mode: z.enum(["prefer", "require"]),
+          evidenceMatch: z.enum(["any", "all"]).default("all"),
           threshold: z.number().min(0).max(100_000).optional(),
           values: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
         })
         .strict(),
     )
-    .min(1)
     .max(20)
+    .superRefine((rules, context) => {
+      const keys = new Set<string>();
+      rules.forEach((rule, index) => {
+        if (keys.has(rule.key)) {
+          context.addIssue({
+            code: "custom",
+            message: "Characteristic keys must be unique",
+            path: [index, "key"],
+          });
+        }
+        keys.add(rule.key);
+        if (
+          rule.enabled &&
+          !(rule.values?.length || legacyCharacteristicKeys.has(rule.key))
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "Enabled custom characteristics need at least one evidence term",
+            path: [index, "values"],
+          });
+        }
+      });
+    })
     .optional(),
 });
 

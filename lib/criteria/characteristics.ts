@@ -17,80 +17,10 @@ export const CRITERION_CHARACTERISTIC_KEYS = [
 export type CriterionCharacteristicKey =
   (typeof CRITERION_CHARACTERISTIC_KEYS)[number];
 
-export const DEFAULT_CRITERION_CHARACTERISTICS: CriterionCharacteristic[] = [
-  {
-    key: "explicitHighSchool",
-    label: "Explicitly in high school",
-    description:
-      "A cited profile or result explicitly lists high-school enrollment. Age is never inferred.",
-    enabled: false,
-    mode: "prefer",
-  },
-  {
-    key: "highSchoolTechInternship",
-    label: "Tech internship in high school",
-    description:
-      "Explicit high-school evidence plus a cited internship or engineering role.",
-    enabled: false,
-    mode: "prefer",
-  },
-  {
-    key: "ioiRecognition",
-    label: "IOI recognition",
-    description:
-      "An official International Olympiad in Informatics result, medal, or placement.",
-    enabled: false,
-    mode: "prefer",
-  },
-  {
-    key: "targetSchool",
-    label: "Listed target school",
-    description:
-      "The candidate's cited school or affiliation matches one of your configured schools.",
-    enabled: false,
-    mode: "prefer",
-    values: [],
-  },
-  {
-    key: "githubHighActivity",
-    label: "High GitHub activity",
-    description:
-      "A high volume of public repositories, pushes, or recent public GitHub events.",
-    enabled: false,
-    mode: "prefer",
-    threshold: 0.45,
-  },
-  {
-    key: "hackerNewsHighActivity",
-    label: "High Hacker News activity",
-    description:
-      "A high volume of public Hacker News submissions or recent posts.",
-    enabled: false,
-    mode: "prefer",
-    threshold: 0.4,
-  },
-  {
-    key: "lowXFollowers",
-    label: "Under 500 X followers",
-    description:
-      "A verified X profile is present and its public follower count is below the threshold.",
-    enabled: false,
-    mode: "prefer",
-    threshold: 500,
-  },
-  {
-    key: "activeButUndiscovered",
-    label: "Active but undiscovered",
-    description:
-      "High public activity combined with relatively low public recognition.",
-    enabled: false,
-    mode: "prefer",
-    threshold: 0.35,
-  },
-];
+export const DEFAULT_CRITERION_CHARACTERISTICS: CriterionCharacteristic[] = [];
 
 export type CandidateCharacteristicMatch = {
-  key: CriterionCharacteristicKey;
+  key: string;
   label: string;
   matched: boolean;
   evidence: string;
@@ -107,6 +37,14 @@ const RECOGNITION =
 
 function clean(value: string) {
   return value.replace(/\s+/gu, " ").trim();
+}
+
+function includesEvidenceTerm(text: string, term: string) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`,
+    "iu",
+  ).test(text);
 }
 
 function candidateText(candidate: Candidate) {
@@ -159,25 +97,34 @@ function thresholdFor(
 export function mergeCriterionCharacteristics(
   configured: CriterionCharacteristic[] | undefined,
 ) {
-  const byKey = new Map((configured ?? []).map((rule) => [rule.key, rule]));
-  return DEFAULT_CRITERION_CHARACTERISTICS.map((fallback) => {
-    const stored = byKey.get(fallback.key);
-    if (!stored) return { ...fallback, values: [...(fallback.values ?? [])] };
-    return {
-      ...fallback,
-      ...stored,
-      label: fallback.label,
-      description: fallback.description,
-      values: Array.isArray(stored.values)
-        ? stored.values.map(clean).filter(Boolean).slice(0, 50)
-        : [...(fallback.values ?? [])],
-    };
-  });
+  const found = new Map<string, CriterionCharacteristic>();
+  for (const rule of configured ?? []) {
+    const key = clean(rule.key).slice(0, 80);
+    const label = clean(rule.label).slice(0, 120);
+    if (!/^[a-z][a-zA-Z0-9_-]*$/u.test(key) || !label || found.has(key)) {
+      continue;
+    }
+    found.set(key, {
+      key,
+      label,
+      description: clean(rule.description ?? "").slice(0, 500),
+      enabled: rule.enabled === true,
+      mode: rule.mode === "require" ? "require" : "prefer",
+      evidenceMatch: rule.evidenceMatch === "any" ? "any" : "all",
+      threshold: Number.isFinite(Number(rule.threshold))
+        ? Number(rule.threshold)
+        : undefined,
+      values: Array.isArray(rule.values)
+        ? [...new Set(rule.values.map(clean).filter(Boolean))].slice(0, 50)
+        : [],
+    });
+  }
+  return [...found.values()].slice(0, 20);
 }
 
 export function evaluateCandidateCharacteristics(
   candidate: Candidate,
-  configured: CriterionCharacteristic[] = DEFAULT_CRITERION_CHARACTERISTICS,
+  configured: CriterionCharacteristic[] = [],
 ): CandidateCharacteristicMatch[] {
   const rules = mergeCriterionCharacteristics(configured);
   const text = candidateText(candidate);
@@ -217,7 +164,7 @@ export function evaluateCandidateCharacteristics(
   );
   const ioiEvidence = IOI.test(text) && RECOGNITION.test(text);
 
-  const values: Record<
+  const legacyMatches: Record<
     CriterionCharacteristicKey,
     Pick<CandidateCharacteristicMatch, "matched" | "evidence">
   > = {
@@ -282,11 +229,31 @@ export function evaluateCandidateCharacteristics(
     },
   };
 
-  return rules.map((rule) => ({
-    key: rule.key as CriterionCharacteristicKey,
-    label: rule.label,
-    ...values[rule.key as CriterionCharacteristicKey],
-  }));
+  return rules.map((rule) => {
+    const legacy = legacyMatches[rule.key as CriterionCharacteristicKey];
+    if (legacy) return { key: rule.key, label: rule.label, ...legacy };
+
+    const terms = (rule.values ?? []).map((value) =>
+      clean(value).toLocaleLowerCase("en-US"),
+    ).filter(Boolean);
+    const matchedTerms = terms.filter((term) => includesEvidenceTerm(text, term));
+    const matched =
+      terms.length > 0 &&
+      (rule.evidenceMatch === "any"
+        ? matchedTerms.length > 0
+        : matchedTerms.length === terms.length);
+    const missingTerms = terms.filter((term) => !matchedTerms.includes(term));
+    return {
+      key: rule.key,
+      label: rule.label,
+      matched,
+      evidence: !terms.length
+        ? "No evidence terms configured."
+        : matched
+          ? `Matched cited evidence term${matchedTerms.length === 1 ? "" : "s"}: ${matchedTerms.join(", ")}.`
+          : `Missing cited evidence term${missingTerms.length === 1 ? "" : "s"}: ${missingTerms.join(", ")}.`,
+    };
+  });
 }
 
 export function candidatePassesRequiredCharacteristics(
@@ -313,10 +280,10 @@ export function preferredCharacteristicCount(
   candidate: Candidate,
   rules: CriterionCharacteristic[],
 ) {
-  const enabledPreferred = new Set<CriterionCharacteristicKey>(
+  const enabledPreferred = new Set<string>(
     mergeCriterionCharacteristics(rules)
       .filter((rule) => rule.enabled && rule.mode === "prefer")
-      .map((rule) => rule.key as CriterionCharacteristicKey),
+      .map((rule) => rule.key),
   );
   return evaluateCandidateCharacteristics(candidate, rules).filter(
     (match) => match.matched && enabledPreferred.has(match.key),

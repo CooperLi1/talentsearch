@@ -244,6 +244,7 @@ export interface CriterionSignal {
 }
 
 export type CriterionCharacteristicMode = "prefer" | "require";
+export type CriterionCharacteristicEvidenceMatch = "any" | "all";
 
 export interface CriterionCharacteristic {
   key: string;
@@ -251,6 +252,7 @@ export interface CriterionCharacteristic {
   description: string;
   enabled: boolean;
   mode: CriterionCharacteristicMode;
+  evidenceMatch?: CriterionCharacteristicEvidenceMatch;
   threshold?: number;
   values?: string[];
 }
