@@ -28,11 +28,16 @@ export default async function SettingsPage() {
     <main className="app-main operator-page settings-page">
       <SiteNav />
       <div className="content-frame operator-shell">
-        <header className="operator-header operator-header-compact">
+        <header className="operator-header operator-header-compact settings-hero">
           <div>
             <p className="eyebrow">Workspace settings</p>
             <h1>Review criteria</h1>
-            <p>Set who should surface, how selective the queue is, and who receives the brief.</p>
+            <p>Shape discovery, ranking, and the weekly brief from one control surface.</p>
+          </div>
+          <div className="settings-hero-note" aria-label="Settings scope">
+            <span>Changes affect</span>
+            <strong>Discovery / ranking / delivery</strong>
+            <p>Source switches update immediately. All other edits apply when saved.</p>
           </div>
         </header>
         {data.dataMode === "unconfigured" ? (

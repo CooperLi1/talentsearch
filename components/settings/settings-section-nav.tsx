@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 
 const sections = [
-  { id: "target", label: "Target profile" },
-  { id: "quality", label: "Quality cutoff" },
-  { id: "digest", label: "Brief delivery" },
-  { id: "sources", label: "Source coverage" },
-  { id: "adaptation", label: "Review preferences" },
+  { description: "Who and what matters", id: "target", label: "Target profile", number: "01" },
+  { description: "Evidence threshold", id: "quality", label: "Quality cutoff", number: "02" },
+  { description: "Schedule and recipients", id: "digest", label: "Brief delivery", number: "03" },
+  { description: "Discovery inputs", id: "sources", label: "Source coverage", number: "04" },
+  { description: "Learning behavior", id: "adaptation", label: "Review preferences", number: "05" },
 ] as const;
 
 export function SettingsSectionNav() {
@@ -57,7 +57,11 @@ export function SettingsSectionNav() {
 
   return (
     <nav className="settings-nav" aria-label="Settings sections" ref={navRef}>
-      {sections.map(({ id, label }) => (
+      <div className="settings-nav-heading">
+        <span>Control stack</span>
+        <p>Five decisions shape every review queue.</p>
+      </div>
+      {sections.map(({ description, id, label, number }) => (
         <a
           aria-current={activeSection === id ? "location" : undefined}
           data-active={activeSection === id}
@@ -65,7 +69,11 @@ export function SettingsSectionNav() {
           key={id}
           onClick={() => setActiveSection(id)}
         >
-          {label}
+          <span className="settings-nav-number">{number}</span>
+          <span className="settings-nav-copy">
+            <strong>{label}</strong>
+            <small>{description}</small>
+          </span>
         </a>
       ))}
     </nav>

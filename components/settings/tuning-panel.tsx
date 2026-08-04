@@ -12,9 +12,21 @@ import { Check, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 const qualityOptions = [
-  { label: "Broad · more people to inspect", value: 12 },
-  { label: "Balanced · strong evidence", value: 18 },
-  { label: "Selective · exceptional evidence", value: 28 },
+  {
+    description: "Surface promising people earlier for a wider manual review.",
+    label: "Broad",
+    value: 12,
+  },
+  {
+    description: "Require multiple strong signals without hiding emerging work.",
+    label: "Balanced",
+    value: 18,
+  },
+  {
+    description: "Only surface profiles with unusually strong public evidence.",
+    label: "Selective",
+    value: 28,
+  },
 ];
 
 const deliveryTimes = Array.from({ length: 24 * 4 }, (_, index) => {
@@ -112,6 +124,7 @@ export function TuningPanel({
     error: boolean;
     text: string;
   } | null>(null);
+  const includedSourceCount = Object.values(sourceEnabled).filter(Boolean).length;
 
   function resetForm() {
     setLookFor(criterion.lookForMarkdown);
@@ -254,8 +267,11 @@ export function TuningPanel({
       <div className="settings-content">
         <section className="settings-section" id="target">
           <header className="settings-section-header">
-            <h2>Who should surface</h2>
-            <p>Describe the people, stages, places, and areas that matter for this search.</p>
+            <span className="settings-section-number">01</span>
+            <div>
+              <h2>Who should surface</h2>
+              <p>Describe the people, stages, places, and areas that matter for this search.</p>
+            </div>
           </header>
           <div className="settings-text-grid">
             <label className="setting-textarea">
@@ -331,7 +347,10 @@ export function TuningPanel({
                     }}
                     type="checkbox"
                   />
-                  {signal.label}
+                  <span>
+                    <strong>{signal.label}</strong>
+                    <small>{signal.description}</small>
+                  </span>
                 </span>
                 <input
                   aria-label={`${signal.label} weight`}
@@ -539,8 +558,11 @@ export function TuningPanel({
 
         <section className="settings-section" id="quality">
           <header className="settings-section-header">
-            <h2>Quality cutoff</h2>
-            <p>Choose how much evidence a person needs before appearing in review.</p>
+            <span className="settings-section-number">02</span>
+            <div>
+              <h2>Quality cutoff</h2>
+              <p>Choose how much evidence a person needs before appearing in review.</p>
+            </div>
           </header>
           <div className="quality-options" role="radiogroup" aria-label="Quality cutoff">
             {qualityOptions.map((option) => (
@@ -554,7 +576,13 @@ export function TuningPanel({
                   }}
                   type="radio"
                 />
-                <span>{option.label}</span>
+                <span className="quality-option-copy">
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>Score {option.value}+</small>
+                  </span>
+                  <p>{option.description}</p>
+                </span>
               </label>
             ))}
           </div>
@@ -562,8 +590,11 @@ export function TuningPanel({
 
         <section className="settings-section" id="digest">
           <header className="settings-section-header">
-            <h2>Brief delivery</h2>
-            <p>Choose the days, send time, review volume, and recipient list.</p>
+            <span className="settings-section-number">03</span>
+            <div>
+              <h2>Brief delivery</h2>
+              <p>Choose the days, send time, review volume, and recipient list.</p>
+            </div>
           </header>
           <div className="settings-grid-three">
             <label className="setting-field" htmlFor="candidate-count">
@@ -646,8 +677,14 @@ export function TuningPanel({
 
         <section className="settings-section" id="sources">
           <header className="settings-section-header">
-            <h2>Source coverage</h2>
-            <p>Choose which sources are included. Sources that still need setup stay off.</p>
+            <span className="settings-section-number">04</span>
+            <div>
+              <h2>Source coverage</h2>
+              <p>Choose which sources are included. Sources that still need setup stay off.</p>
+            </div>
+            <span className="settings-section-count">
+              {includedSourceCount} of {sources.length} active
+            </span>
           </header>
           {sources.length ? (
             <>
@@ -698,8 +735,11 @@ export function TuningPanel({
 
         <section className="settings-section" id="adaptation">
           <header className="settings-section-header">
-            <h2>Review preferences</h2>
-            <p>Decide whether explicit shortlist, watch, and pass decisions should influence future ordering.</p>
+            <span className="settings-section-number">05</span>
+            <div>
+              <h2>Review preferences</h2>
+              <p>Decide whether explicit shortlist, watch, and pass decisions should influence future ordering.</p>
+            </div>
           </header>
           <label className="adaptation-toggle">
             <span>
@@ -715,27 +755,33 @@ export function TuningPanel({
               type="checkbox"
             />
           </label>
-          <button className="settings-reset" onClick={resetForm} type="button">
-            <RotateCcw aria-hidden="true" /> Reset unsaved changes
-          </button>
         </section>
 
         <div className="settings-sticky-save">
-          <span
-            className={saveError ? "settings-save-error" : undefined}
-            role={saveError ? "alert" : "status"}
-          >
-            {saveError ?? (saved ? "Settings saved" : "Review changes before leaving")}
-          </span>
-          <button
-            className="editorial-button editorial-button-dark"
-            disabled={saving}
-            onClick={saveSettings}
-            type="button"
-          >
-            {saved ? <Check aria-hidden="true" /> : <Save aria-hidden="true" />}
-            {saving ? "Saving" : saved ? "Saved" : "Save settings"}
-          </button>
+          <div className="settings-save-state">
+            <span className={saved ? "settings-save-indicator settings-save-indicator-saved" : "settings-save-indicator"} />
+            <span
+              className={saveError ? "settings-save-error" : undefined}
+              role={saveError ? "alert" : "status"}
+            >
+              <strong>{saveError ? "Could not save" : saved ? "Settings saved" : "Unsaved workspace settings"}</strong>
+              <small>{saveError ?? (saved ? "Your next run will use these settings." : "Source switches save separately and apply immediately.")}</small>
+            </span>
+          </div>
+          <div className="settings-save-actions">
+            <button className="settings-reset" onClick={resetForm} type="button">
+              <RotateCcw aria-hidden="true" /> Reset
+            </button>
+            <button
+              className="editorial-button editorial-button-dark"
+              disabled={saving}
+              onClick={saveSettings}
+              type="button"
+            >
+              {saved ? <Check aria-hidden="true" /> : <Save aria-hidden="true" />}
+              {saving ? "Saving" : saved ? "Saved" : "Save settings"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
