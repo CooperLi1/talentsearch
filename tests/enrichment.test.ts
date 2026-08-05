@@ -204,6 +204,28 @@ test("public web enrichment receives prior evidence and newly observed provider 
   }]);
 });
 
+test("enrichment warnings retain their connector for the run ledger", async () => {
+  const person = observation();
+  const result = await enrichPeople({
+    people: [person],
+    connectors: new Map<SourceKind, DiscoveryConnector>([["brave-enrichment", {
+      kind: "brave-enrichment",
+      displayName: "Public web",
+      discover: async () => ({ events: [] }),
+      enrich: async () => ({
+        events: [],
+        warnings: ["Brave Search is rate-limited"],
+      }),
+    }]]),
+    settings: { "brave-enrichment": { enabled: true } },
+  });
+
+  assert.deepEqual(result.warnings, [{
+    source: "brave-enrichment",
+    message: "Brave Search is rate-limited",
+  }]);
+});
+
 test("bounded enrichment rotates native providers and reserves a slot for public search", async () => {
   const calls: SourceKind[] = [];
   const person = observation({
@@ -289,7 +311,7 @@ test("enrichment stops scheduling connectors after its worker signal aborts", as
   });
 
   assert.deepEqual(calls, ["github"]);
-  assert.match(result.warnings.join("\n"), /budget ended/i);
+  assert.match(result.warnings.map((warning) => warning.message).join("\n"), /budget ended/i);
 });
 
 test("deep research rotates bounded query plans while retaining LinkedIn lookup", () => {

@@ -421,6 +421,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       maxConnectorsPerPerson: options.maxEnrichmentConnectorsPerPerson,
       signal: options.signal,
     });
+    failures.push(...enrichment.warnings);
     const enrichedEvents = uniqueRunEvents(
       enrichment.results.flatMap((item) => item.events),
       seenRunEventKeys,
@@ -539,6 +540,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       now: startedAt,
       signal: options.signal,
     });
+    failures.push(...graphEnrichment.warnings);
     const graphEnrichedEvents = uniqueRunEvents(
       graphEnrichment.results.flatMap((item) => item.events),
       seenRunEventKeys,

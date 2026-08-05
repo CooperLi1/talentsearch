@@ -87,10 +87,10 @@ export async function enrichPeople(input: {
   signal?: AbortSignal;
 }): Promise<{
   results: Array<{ person: PersonObservation; events: DiscoveryEvent[]; edges: GraphEdge[] }>;
-  warnings: string[];
+  warnings: Array<{ source: SourceKind; message: string }>;
 }> {
   const now = input.now ?? new Date();
-  const warnings: string[] = [];
+  const warnings: Array<{ source: SourceKind; message: string }> = [];
   const requestedConnectorLimit = Number(
     input.maxConnectorsPerPerson ?? MAX_CONNECTORS_PER_PERSON,
   );
@@ -170,7 +170,10 @@ export async function enrichPeople(input: {
 
       while (queue.length && attempted.size < maxConnectorsPerPerson) {
         if (input.signal?.aborted) {
-          warnings.push(`Enrichment budget ended while researching ${person.displayName}`);
+          warnings.push({
+            source: queue[0] ?? "brave-enrichment",
+            message: `Enrichment budget ended while researching ${person.displayName}`,
+          });
           break;
         }
         // Public search is the cross-source bridge for every profile. Reserve
@@ -199,16 +202,20 @@ export async function enrichPeople(input: {
             events.push(...result.events);
             evidenceEvents.push(...result.events);
             edges.push(...(result.edges ?? []));
-            warnings.push(...(result.warnings ?? []).map((warning) => `${connector.kind}: ${warning}`));
+            warnings.push(...(result.warnings ?? []).map((warning) => ({
+              source: connector.kind,
+              message: warning,
+            })));
             for (const event of result.events) {
               enrichedPerson = mergePersonObservation(enrichedPerson, event.person);
             }
             enqueueKnownProviders();
           }
         } catch (error) {
-          warnings.push(
-            `${connector.displayName} enrichment failed for ${person.displayName}: ${error instanceof Error ? error.message : "unknown error"}`,
-          );
+          warnings.push({
+            source: connector.kind,
+            message: `${connector.displayName} enrichment failed for ${person.displayName}: ${error instanceof Error ? error.message : "unknown error"}`,
+          });
           if (input.signal?.aborted) break;
         }
       }

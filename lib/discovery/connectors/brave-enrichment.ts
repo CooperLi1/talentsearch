@@ -29,7 +29,15 @@ type ProfileLocator = {
   claim: CrossProfileClaim;
   queryHashes: Set<string>;
 };
+class BraveRateLimitError extends Error {
+  constructor() {
+    super("Brave Search is rate-limited; public-web enrichment is paused for 15 minutes");
+    this.name = "BraveRateLimitError";
+  }
+}
 const locatorCache = new Map<string, CachedLocator>();
+let braveRateLimitedUntil = 0;
+let braveSearchGate = Promise.resolve();
 // Provider-native connectors already collect GitHub, GitLab, and HN evidence
 // with stronger identity guarantees. Brave keeps their direct account URLs as
 // hypotheses but does not spend the page-verification budget re-fetching their
@@ -203,32 +211,54 @@ async function locate(query: string, count: number, signal?: AbortSignal) {
   const key = stableHash(query, count);
   const cached = locatorCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.urls;
-  const url = new URL("https://api.search.brave.com/res/v1/web/search");
-  url.searchParams.set("q", query);
-  url.searchParams.set("count", String(Math.min(20, count)));
-  url.searchParams.set("safesearch", "strict");
-  url.searchParams.set("text_decorations", "false");
-  const response = await fetchJson<BraveResponse>(url.toString(), {
-    headers: {
-      accept: "application/json",
-      "x-subscription-token": process.env.BRAVE_SEARCH_API_KEY!,
-    },
-    signal,
-    rateLimitPerSecond: 0.5,
-    retries: 1,
-    timeoutMs: 8_000,
-    maxBytes: 1_500_000,
+  const previous = braveSearchGate;
+  let release: (() => void) | undefined;
+  braveSearchGate = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  // Brave content is only a transient locator. Only normalized result URLs survive this function.
-  const urls = [
-    ...new Set(
-      (response.web?.results ?? [])
-        .map((result) => normalizeLocator(result.url ?? ""))
-        .filter(Boolean),
-    ),
-  ];
-  locatorCache.set(key, { expiresAt: Date.now() + 24 * 60 * 60 * 1_000, urls });
-  return urls;
+  await previous;
+  try {
+    if (Date.now() < braveRateLimitedUntil) throw new BraveRateLimitError();
+    const url = new URL("https://api.search.brave.com/res/v1/web/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("count", String(Math.min(20, count)));
+    url.searchParams.set("safesearch", "strict");
+    url.searchParams.set("text_decorations", "false");
+    let response: BraveResponse;
+    try {
+      response = await fetchJson<BraveResponse>(url.toString(), {
+        headers: {
+          accept: "application/json",
+          "x-subscription-token": process.env.BRAVE_SEARCH_API_KEY!,
+        },
+        signal,
+        rateLimitPerSecond: 0.5,
+        // The connector-level circuit breaker handles 429s. Retrying here would
+        // spend another quota request before the cooldown can take effect.
+        retries: 0,
+        timeoutMs: 8_000,
+        maxBytes: 1_500_000,
+      });
+    } catch (error) {
+      if (error instanceof Error && /HTTP 429 from api\.search\.brave\.com/i.test(error.message)) {
+        braveRateLimitedUntil = Date.now() + 15 * 60 * 1_000;
+        throw new BraveRateLimitError();
+      }
+      throw error;
+    }
+    // Brave content is only a transient locator. Only normalized result URLs survive this function.
+    const urls = [
+      ...new Set(
+        (response.web?.results ?? [])
+          .map((result) => normalizeLocator(result.url ?? ""))
+          .filter(Boolean),
+      ),
+    ];
+    locatorCache.set(key, { expiresAt: Date.now() + 24 * 60 * 60 * 1_000, urls });
+    return urls;
+  } finally {
+    release?.();
+  }
 }
 
 export class BraveEnrichmentConnector implements DiscoveryConnector {
@@ -269,6 +299,7 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
         urls = await locate(query, maxResults, context.signal);
       } catch (error) {
         warnings.push(error instanceof Error ? error.message : "Public web lookup failed");
+        if (error instanceof BraveRateLimitError) break;
         continue;
       }
       const pagesToVerify: string[] = [];
