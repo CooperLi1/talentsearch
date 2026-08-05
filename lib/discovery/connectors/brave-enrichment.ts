@@ -53,6 +53,15 @@ function looksLikeHumanName(value: string) {
   return parts.length >= 2 && parts.length <= 6 && parts.every((part) => /[\p{L}]{2}/u.test(part));
 }
 
+export function publicPageContent($: cheerio.CheerioAPI) {
+  const semanticSections = $("article,main")
+    .toArray()
+    .map((element) => $(element).text().trim())
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  return (semanticSections[0] || $("body").text()).slice(0, 12_000);
+}
+
 function safeHostname(value?: string) {
   if (!value) return undefined;
   try {
@@ -316,10 +325,7 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
           }
           const title = sanitizePlainText($('meta[property="og:title"]').attr("content") || $("title").text(), 500);
           const author = sanitizePlainText($('meta[name="author"]').attr("content"), 200);
-          const visibleContent = redactSensitive(
-            $("article,main").first().text().slice(0, 12_000),
-            6_000,
-          );
+          const visibleContent = redactSensitive(publicPageContent($), 6_000);
           const description = redactSensitive(
             $('meta[name="description"]').attr("content") || visibleContent,
           );

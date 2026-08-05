@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as cheerio from "cheerio";
+
 import { enrichPeople } from "../lib/discovery/enrichment";
 import {
   candidateResearchQueries,
   hasCorroboratedPageIdentity,
+  publicPageContent,
   projectLocatorContext,
 } from "../lib/discovery/connectors/brave-enrichment";
 import { ownedWorkProfileFromHtml } from "../lib/discovery/connectors/web-presence";
@@ -314,6 +317,34 @@ test("deep research rotates bounded query plans while retaining LinkedIn lookup"
   assert.ok(third.some((query) => query.includes("Ada Lovelace Example")));
   assert.notDeepEqual(first, second);
   assert.notDeepEqual(second, third);
+});
+
+test("public page parsing falls back to body content on legacy profile pages", () => {
+  const $ = cheerio.load(`
+    <html>
+      <body>
+        <nav>Navigation</nav>
+        <section>Rareș-Felix Tudose is an IOI gold medalist.</section>
+      </body>
+    </html>
+  `);
+  assert.match(publicPageContent($), /IOI gold medalist/);
+});
+
+test("public page parsing prefers the richest semantic content section", () => {
+  const $ = cheerio.load(`
+    <html>
+      <body>
+        <article></article>
+        <main>Rain Jiang competed at five International Olympiads in Informatics.</main>
+        <footer>Unrelated footer text that should not replace the main content.</footer>
+      </body>
+    </html>
+  `);
+  assert.equal(
+    publicPageContent($),
+    "Rain Jiang competed at five International Olympiads in Informatics.",
+  );
 });
 
 test("direct profile URLs become provider hypotheses without treating arbitrary pages as accounts", () => {
