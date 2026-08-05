@@ -1,4 +1,9 @@
+import {
+  reviewIdentityEvidenceMatch,
+  type IdentityMatchDecision,
+} from "@/lib/ai/identity-match";
 import type {
+  DiscoveryEvent,
   IdentityCandidate,
   IdentityDecision,
   PersonObservation,
@@ -127,6 +132,23 @@ function compareIdentity(
   };
 }
 
+function reviewableIdentityCandidates(
+  observation: PersonObservation,
+  candidates: IdentityCandidate[],
+) {
+  return candidates
+    .map((candidate) => ({ candidate, ...compareIdentity(observation, candidate) }))
+    .filter((item) =>
+      item.score >= 0.3 &&
+      item.reasons.some((reason) =>
+        reason === "Exact normalized name" || reason === "Very similar name" ||
+        reason.startsWith("Unverified "),
+      )
+    )
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 2);
+}
+
 export function resolveIdentity(
   observation: PersonObservation,
   candidates: IdentityCandidate[],
@@ -163,4 +185,100 @@ export function resolveIdentity(
     confidence: Math.max(0.55, 1 - best.score),
     reasons: ["No candidate passed the conservative review threshold"],
   };
+}
+
+type IdentityEvidenceReviewer = typeof reviewIdentityEvidenceMatch;
+
+export async function resolveIdentityWithEvidence(
+  input: {
+    observation: PersonObservation;
+    candidates: IdentityCandidate[];
+    event: DiscoveryEvent;
+    signal?: AbortSignal;
+  },
+  reviewer: IdentityEvidenceReviewer = reviewIdentityEvidenceMatch,
+): Promise<IdentityDecision> {
+  const deterministic = resolveIdentity(input.observation, input.candidates);
+  if (deterministic.action === "match") return deterministic;
+  const reviewable = reviewableIdentityCandidates(input.observation, input.candidates);
+  if (!reviewable.length || input.signal?.aborted) return deterministic;
+
+  const reviewed: Array<{
+    candidate: IdentityCandidate;
+    review: IdentityMatchDecision | null;
+  }> = [];
+  for (const { candidate } of reviewable) {
+    const candidatePerson = candidate.person ?? {
+      displayName: candidate.displayName,
+      identities: candidate.identities,
+      affiliations: candidate.affiliations,
+      location: candidate.location,
+      websiteUrl: candidate.websiteUrl,
+      sourceUrl: candidate.websiteUrl || candidate.identities[0]?.profileUrl || input.event.sourceUrl,
+    };
+    reviewed.push({
+      candidate,
+      review: await reviewer({
+        person: candidatePerson,
+        evidenceEvents: candidate.evidenceEvents ?? [],
+        observed: {
+          url: input.event.sourceUrl,
+          title: input.event.title,
+          description: input.event.description,
+          content: JSON.stringify({
+            name: input.observation.displayName,
+            headline: input.observation.headline,
+            biography: input.observation.biography,
+            affiliations: input.observation.affiliations,
+            location: input.observation.location,
+            explicitCareerStage: input.observation.explicitCareerStage,
+            identities: input.observation.identities.map((identity) => ({
+              provider: identity.provider,
+              username: identity.username,
+              profileUrl: identity.profileUrl,
+              verified: identity.verified === true,
+            })),
+          }),
+        },
+        signal: input.signal,
+      }),
+    });
+    if (input.signal?.aborted) break;
+  }
+
+  if (!reviewed.some((item) => item.review)) return deterministic;
+  const matches = reviewed.filter((item) => item.review?.decision === "match");
+  const unresolved = reviewed.filter((item) =>
+    !item.review || item.review.decision === "review",
+  );
+  if (matches.length === 1 && unresolved.length === 0) {
+    const selected = matches[0]!;
+    return {
+      action: "match",
+      candidateId: selected.candidate.id,
+      confidence: selected.review!.confidence,
+      reasons: [
+        "Model-corroborated public identity evidence",
+        selected.review!.summary,
+        ...selected.review!.corroboratingSignals.map((signal) =>
+          `${signal.category}: ${signal.candidateEvidence} ↔ ${signal.observedEvidence}`
+        ),
+      ].slice(0, 8),
+    };
+  }
+  if (matches.length || unresolved.length) {
+    const possible = [...matches, ...unresolved];
+    return {
+      action: "review",
+      possibleCandidateIds: possible.map((item) => item.candidate.id),
+      confidence: Math.max(...possible.map((item) => item.review?.confidence ?? 0.5)),
+      reasons: [
+        "Model review found plausible identity overlap but not one unambiguous match",
+        ...possible.flatMap((item) => item.review?.conflicts.map((conflict) =>
+          `${conflict.category} conflict: ${conflict.candidateEvidence} ↔ ${conflict.observedEvidence}`
+        ) ?? []),
+      ].slice(0, 8),
+    };
+  }
+  return deterministic;
 }

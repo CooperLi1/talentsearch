@@ -197,6 +197,8 @@ export type IdentityCandidate = {
   location?: string;
   websiteUrl?: string;
   emailHash?: string;
+  person?: PersonObservation;
+  evidenceEvents?: DiscoveryEvent[];
 };
 
 export type IdentityDecision =

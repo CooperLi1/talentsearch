@@ -20,7 +20,7 @@ import { deduplicateEvents } from "./idempotency";
 import { evidencePublisherCount } from "./evidence-publishers";
 import { enrichPeople } from "./enrichment";
 import { expandDiscoveryGraph, graphEdgesToCandidateEvents } from "./graph";
-import { resolveIdentity } from "./identity";
+import { resolveIdentityWithEvidence } from "./identity";
 import type { DiscoveryRepository, EnrichmentTarget } from "./repository";
 import { scoreCandidate } from "./scoring";
 import type {
@@ -63,6 +63,7 @@ export async function persistObservedEvents(input: {
   runId: string;
   events: DiscoveryEvent[];
   aiSummaryKeys: Set<string>;
+  signal?: AbortSignal;
 }) {
   let eventsInserted = 0;
   const createdCandidateIds = new Set<string>();
@@ -89,10 +90,15 @@ export async function persistObservedEvents(input: {
           confidence: 1,
           reasons: ["Same verified provider subject resolved earlier in this batch"],
         }
-      : resolveIdentity(
-          event.person,
-          await input.repository.findIdentityCandidates(input.workspaceId, event.person),
-        );
+      : await resolveIdentityWithEvidence({
+          observation: event.person,
+          candidates: await input.repository.findIdentityCandidates(
+            input.workspaceId,
+            event.person,
+          ),
+          event,
+          signal: input.signal,
+        });
     const persisted = await input.repository.persistIdentityDecision({
       workspaceId: input.workspaceId,
       observation: event.person,
@@ -372,6 +378,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       runId,
       events,
       aiSummaryKeys: allocateAiSummaryKeys(events),
+      signal: options.signal,
     });
     recordPersistence(events, persisted);
 
@@ -424,6 +431,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       runId,
       events: enrichedEvents,
       aiSummaryKeys: allocateAiSummaryKeys(enrichedEvents),
+      signal: options.signal,
     });
     recordPersistence(enrichedEvents, enrichedPersisted);
     await mapLimit(enrichmentTargets, 3, async (target, index) => {
@@ -503,6 +511,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       runId,
       events: graphEvents,
       aiSummaryKeys: allocateAiSummaryKeys(graphEvents),
+      signal: options.signal,
     });
     recordPersistence(graphEvents, graphPersisted);
 
@@ -540,6 +549,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
       runId,
       events: graphEnrichedEvents,
       aiSummaryKeys: allocateAiSummaryKeys(graphEnrichedEvents),
+      signal: options.signal,
     });
     recordPersistence(graphEnrichedEvents, graphEnrichedPersisted);
     for (const candidateId of graphEnrichedPersisted.affected.keys()) {

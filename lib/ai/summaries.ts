@@ -55,13 +55,18 @@ export function needsPlainLanguageRetry(
 
 /**
  * Licensed work-history snapshots carry employment and education facts that
- * public technical sources rarely state. Only provider-subject-verified
- * imports qualify; fuzzy matches stay out of briefs until corroborated.
+ * public technical sources rarely state. Provider-subject verification or a
+ * high-confidence, independently corroborated identity decision is required.
  */
 export function isLicensedProfileBriefEvent(event: DiscoveryEvent) {
-  return event.source === "people-data-labs" &&
+  if (event.source !== "people-data-labs") return false;
+  const providerVerified =
     event.confidence >= 0.9 &&
     event.tags?.includes("verified-provider-subject") === true;
+  const modelCorroborated =
+    event.confidence >= 0.88 &&
+    event.tags?.includes("model-corroborated-identity") === true;
+  return providerVerified || modelCorroborated;
 }
 
 export function isSubstantiveBriefEvent(event: DiscoveryEvent) {

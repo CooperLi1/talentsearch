@@ -1,6 +1,11 @@
 import * as cheerio from "cheerio";
 
 import {
+  identityMatchModelName,
+  reviewIdentityEvidenceMatch,
+  type IdentityMatchDecision,
+} from "@/lib/ai/identity-match";
+import {
   crossProfileClaimForUrl,
   extractCrossProfileClaims,
   resolveCrossProfileClaims,
@@ -31,9 +36,10 @@ const locatorCache = new Map<string, CachedLocator>();
 // repositories or feeds.
 const blockedHosts = /(^|\.)(linkedin\.com|x\.com|facebook\.com|instagram\.com|tiktok\.com|github\.com|gitlab\.com|news\.ycombinator\.com)$/i;
 const workEvidence = /\b(project|research|paper|preprint|repository|open source|software|system|protocol|compiler|database|robot|biology|physics|mathematics|engineering|benchmark|dataset|competition|olympiad|hackathon|science fair|invention|award|built|published)\b/i;
+const structuredOrganization = /\b(university|college|school|academy|institute|laboratory|lab|company|corporation|corp|inc|llc|ltd|foundation)\b/i;
 
-function redactSensitive(text: string) {
-  return sanitizePlainText(text, 3_000)
+function redactSensitive(text: string, maximum = 3_000) {
+  return sanitizePlainText(text, maximum)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[contact redacted]")
     .replace(/(?:\+?\d[\d\s().-]{7,}\d)/g, "[contact redacted]");
 }
@@ -240,6 +246,13 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
     const warnings: string[] = [];
     const seen = new Set<string>();
     const profileLocators = new Map<string, ProfileLocator>();
+    const requestedModelReviewLimit = Number(
+      process.env.AI_IDENTITY_MATCH_REVIEWS_PER_CANDIDATE ?? 2,
+    );
+    const maxModelReviews = Number.isFinite(requestedModelReviewLimit)
+      ? Math.min(3, Math.max(0, Math.floor(requestedModelReviewLimit)))
+      : 2;
+    let modelReviewsUsed = 0;
 
     for (const query of queries) {
       let urls: string[];
@@ -303,10 +316,14 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
           }
           const title = sanitizePlainText($('meta[property="og:title"]').attr("content") || $("title").text(), 500);
           const author = sanitizePlainText($('meta[name="author"]').attr("content"), 200);
-          const description = redactSensitive(
-            $('meta[name="description"]').attr("content") || $("article,main").first().text().slice(0, 3_000),
+          const visibleContent = redactSensitive(
+            $("article,main").first().text().slice(0, 12_000),
+            6_000,
           );
-          const pageText = normalizedWords(`${title} ${author} ${$("article,main").first().text().slice(0, 20_000)}`);
+          const description = redactSensitive(
+            $('meta[name="description"]').attr("content") || visibleContent,
+          );
+          const pageText = normalizedWords(`${title} ${author} ${visibleContent}`);
           const outboundUrls = new Set<string>();
           $("a[href]").each((_, element) => {
             const href = $(element).attr("href");
@@ -332,6 +349,13 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
           const authorMatch = Boolean(author && knownNames.includes(normalizedWords(author)));
           const nameMatch = knownNames.some((knownName) => pageText.includes(knownName));
           const affiliationMatch = affiliations.some((affiliation) => pageText.includes(affiliation));
+          // Country-only roster values are useful search context, but they are
+          // not strong enough to auto-bind a same-name page. Let the evidence
+          // reviewer compare them alongside projects, education, and timeline.
+          const strongAffiliationMatch = affiliations.some(
+            (affiliation) =>
+              structuredOrganization.test(affiliation) && pageText.includes(affiliation),
+          );
           const sameKnownWebsite = Boolean(
             knownWebsiteHost &&
               (host === knownWebsiteHost ||
@@ -342,22 +366,114 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
           // otherwise bind an unrelated personal site to a candidate. Require
           // a second public anchor such as an affiliation, known account, known
           // project, or an already-verified website domain.
-          const identityPresent = hasCorroboratedPageIdentity({
+          let identityPresent = hasCorroboratedPageIdentity({
             nameMatch,
-            affiliationMatch,
+            affiliationMatch: strongAffiliationMatch,
             matchedProject: Boolean(matchedProject),
             linkedKnownProfile,
             sameKnownWebsite,
           });
+          const relevantWork = Boolean(
+            authorMatch ||
+            matchedProject ||
+            linkedKnownProfile ||
+            workEvidence.test(`${title} ${description} ${visibleContent}`),
+          );
+          let modelReview: IdentityMatchDecision | null = null;
+          const previouslyReviewed = (context.evidenceEvents ?? []).some(
+            (event) =>
+              comparableUrl(event.sourceUrl) === comparableUrl(canonicalUrl) &&
+              event.tags?.some((tag) =>
+                [
+                  "model-corroborated-identity",
+                  "model-identity-review",
+                  "model-identity-conflict",
+                ].includes(tag),
+              ),
+          );
           if (
-            !identityPresent ||
-            !title ||
-            (!authorMatch && !matchedProject && !linkedKnownProfile && !workEvidence.test(`${title} ${description}`))
+            title &&
+            nameMatch &&
+            relevantWork &&
+            !identityPresent &&
+            !previouslyReviewed &&
+            modelReviewsUsed < maxModelReviews
           ) {
+            modelReviewsUsed += 1;
+            modelReview = await reviewIdentityEvidenceMatch({
+              person: context.person,
+              evidenceEvents: context.evidenceEvents ?? [],
+              observed: {
+                url: canonicalUrl,
+                title,
+                author,
+                description,
+                content: visibleContent,
+              },
+              signal: context.signal,
+            });
+            identityPresent = modelReview?.decision === "match";
+          }
+          if (modelReview && modelReview.decision !== "match") {
+            const needsReview = modelReview.decision === "review";
+            const websiteHypothesis = needsReview
+              ? [{
+                  provider: "website" as const,
+                  externalId: stableHash(canonicalUrl),
+                  profileUrl: canonicalUrl,
+                  verified: false,
+                  confidence: Math.min(0.75, modelReview.confidence),
+                  proof: "search-consensus" as const,
+                  proofSourceUrl: canonicalUrl,
+                }]
+              : [];
+            events.push(createDiscoveryEvent({
+              source: "brave-enrichment",
+              sourceExternalId: stableHash(
+                "identity-review",
+                canonicalUrl,
+                context.person.displayName,
+              ),
+              type: "profile_observed",
+              title: needsReview
+                ? `A possible public page for ${context.person.displayName} needs identity review`
+                : `A conflicting same-name page for ${context.person.displayName} was flagged`,
+              description: description || title,
+              sourceUrl: canonicalUrl,
+              person: {
+                ...context.person,
+                identities: [...context.person.identities, ...websiteHypothesis].slice(0, 16),
+              },
+              tags: [
+                "public-web",
+                needsReview ? "model-identity-review" : "model-identity-conflict",
+                "requires-corroboration",
+              ],
+              raw: {
+                locator: "brave-search",
+                queryHash: stableHash(query),
+                canonicalUrl,
+                retrievedAt: context.now.toISOString(),
+                identityReview: modelReview,
+                identityModel: identityMatchModelName(),
+                identityPromptVersion: "identity-evidence-v1",
+                contentHash: stableHash(title, description, pageText.slice(0, 10_000)),
+                snippetStored: false,
+              },
+              confidence: needsReview
+                ? Math.min(0.64, Math.max(0.35, modelReview.confidence))
+                : Math.min(0.3, modelReview.confidence),
+              now: context.now,
+            }));
+            return;
+          }
+          if (!identityPresent || !title || !relevantWork) {
             return;
           }
           const confidence =
-            authorMatch || sameKnownWebsite
+            modelReview?.decision === "match"
+              ? Math.min(0.86, Math.max(0.8, modelReview.confidence))
+              : authorMatch || sameKnownWebsite
               ? 0.86
               : matchedProject
                 ? 0.84
@@ -407,7 +523,9 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
               },
               tags: [
                 "public-web",
-                authorMatch
+                modelReview?.decision === "match"
+                  ? "model-corroborated-identity"
+                  : authorMatch
                   ? "authored"
                   : sameKnownWebsite
                     ? "known-domain"
@@ -423,6 +541,19 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
                 canonicalUrl,
                 matchedProjectUrl: matchedProject?.url,
                 retrievedAt: context.now.toISOString(),
+                identityReview: modelReview ?? undefined,
+                deterministicSignals: {
+                  nameMatch,
+                  affiliationMatch,
+                  strongAffiliationMatch,
+                  matchedProject: Boolean(matchedProject),
+                  linkedKnownProfile,
+                  sameKnownWebsite,
+                },
+                identityModel: modelReview
+                  ? identityMatchModelName()
+                  : undefined,
+                identityPromptVersion: modelReview ? "identity-evidence-v1" : undefined,
                 contentHash: stableHash(title, description, pageText.slice(0, 10_000)),
                 snippetStored: false,
               },

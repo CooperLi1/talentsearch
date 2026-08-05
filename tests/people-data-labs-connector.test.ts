@@ -4,6 +4,7 @@ import test from "node:test";
 import { getDefaultConnectorSettings, parseDiscoveryConfiguration } from "../lib/discovery/config";
 import { createConnectorRegistry } from "../lib/discovery/connectors";
 import {
+  licensedFuzzyLookupAnchor,
   namesRoughlyMatch,
   parseLicensedProfile,
   PeopleDataLabsConnector,
@@ -83,6 +84,22 @@ test("fuzzy lookups require a human name plus an affiliation or location anchor"
     if (previous === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
     else process.env.PEOPLE_DATA_SEARCH_KEY = previous;
   }
+});
+
+test("roster countries become location anchors instead of company names", () => {
+  assert.deepEqual(licensedFuzzyLookupAnchor({
+    displayName: "Hengxi Liu",
+    identities: [{ provider: "roster-page", externalId: "ioi-2025-1" }],
+    affiliations: ["China"],
+    sourceUrl: "https://stats.ioinformatics.org/people/1001",
+  }), { location: "China" });
+  assert.deepEqual(licensedFuzzyLookupAnchor({
+    displayName: "Reviewed Person",
+    identities: [{ provider: "github", externalId: "1234" }],
+    affiliations: ["Example University"],
+    location: "California",
+    sourceUrl: "https://github.com/reviewed",
+  }), { school: "Example University", location: "California" });
 });
 
 test("a recent licensed event suppresses a second billed lookup", async () => {
@@ -176,6 +193,13 @@ test("verified licensed profiles reach briefs; fuzzy matches stay excluded", asy
   const fuzzy = { ...base, confidence: 0.75, tags: ["licensed-data", "requires-corroboration"] };
   assert.equal(isLicensedProfileBriefEvent(fuzzy), false);
   assert.equal(isSubstantiveBriefEvent(fuzzy), false);
+  const modelMatched = {
+    ...base,
+    confidence: 0.89,
+    tags: ["licensed-data", "model-corroborated-identity"],
+  };
+  assert.equal(isLicensedProfileBriefEvent(modelMatched), true);
+  assert.equal(isSubstantiveBriefEvent(modelMatched), true);
 });
 
 test("OpenAlex name search binds only a unique name-and-affiliation match", async () => {

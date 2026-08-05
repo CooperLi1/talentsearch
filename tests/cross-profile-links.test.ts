@@ -6,7 +6,10 @@ import {
   extractSingleGitHubProfileHandle,
   resolveCrossProfileClaims,
 } from "../lib/discovery/cross-profile-links";
-import { resolveIdentity } from "../lib/discovery/identity";
+import {
+  resolveIdentity,
+  resolveIdentityWithEvidence,
+} from "../lib/discovery/identity";
 import type { IdentityCandidate, PersonObservation } from "../lib/discovery/types";
 
 test("extracts one direct GitHub profile link from public profile HTML", () => {
@@ -86,6 +89,145 @@ test("same names without a durable identifier remain separate", () => {
   };
   const decision = resolveIdentity(observation, [candidate]);
   assert.equal(decision.action, "create");
+});
+
+test("model-corroborated work and education can join a same-name cross-source identity", async () => {
+  const observation: PersonObservation = {
+    displayName: "Alex Kim",
+    headline: "Compiler researcher",
+    affiliations: ["Example University"],
+    sourceUrl: "https://example.test/alex-kim",
+    identities: [{ provider: "website", externalId: "alex-kim-page" }],
+  };
+  const candidate: IdentityCandidate = {
+    id: "11",
+    displayName: "Alex Kim",
+    identities: [{ provider: "roster-page", externalId: "ioi-alex-kim" }],
+    person: {
+      displayName: "Alex Kim",
+      affiliations: ["Example University"],
+      sourceUrl: "https://stats.example.test/alex-kim",
+      identities: [{ provider: "roster-page", externalId: "ioi-alex-kim" }],
+    },
+  };
+  const event = {
+    idempotencyKey: "alex-kim-compiler",
+    source: "brave-enrichment" as const,
+    sourceExternalId: "alex-kim-compiler",
+    type: "other" as const,
+    title: "Alex Kim published the Atlas compiler",
+    description: "Example University student Alex Kim built the Atlas compiler.",
+    occurredAt: "2026-08-01T00:00:00.000Z",
+    discoveredAt: "2026-08-05T00:00:00.000Z",
+    sourceUrl: observation.sourceUrl,
+    evidence: [{ label: "Public page", url: observation.sourceUrl }],
+    person: observation,
+    confidence: 0.8,
+  };
+  const decision = await resolveIdentityWithEvidence(
+    { observation, candidates: [candidate], event },
+    async () => ({
+      verdict: "match",
+      decision: "match",
+      confidence: 0.91,
+      corroboratingSignals: [
+        {
+          category: "education",
+          candidateEvidence: "Example University",
+          observedEvidence: "Example University student",
+        },
+        {
+          category: "project",
+          candidateEvidence: "Atlas compiler",
+          observedEvidence: "Built the Atlas compiler",
+        },
+      ],
+      conflicts: [],
+      summary: "The school and distinctive project align.",
+    }),
+  );
+  assert.equal(decision.action, "match");
+  if (decision.action === "match") assert.equal(decision.candidateId, "11");
+});
+
+test("an unavailable identity model preserves the deterministic fallback", async () => {
+  const observation: PersonObservation = {
+    displayName: "Alex Kim",
+    sourceUrl: "https://example.test/alex-kim",
+    identities: [{ provider: "website", externalId: "alex-kim-page" }],
+  };
+  const candidate: IdentityCandidate = {
+    id: "11",
+    displayName: "Alex Kim",
+    identities: [{ provider: "roster-page", externalId: "ioi-alex-kim" }],
+  };
+  const event = {
+    idempotencyKey: "alex-kim-page",
+    source: "brave-enrichment" as const,
+    sourceExternalId: "alex-kim-page",
+    type: "profile_observed" as const,
+    title: "Alex Kim profile",
+    occurredAt: "2026-08-01T00:00:00.000Z",
+    discoveredAt: "2026-08-05T00:00:00.000Z",
+    sourceUrl: observation.sourceUrl,
+    evidence: [],
+    person: observation,
+    confidence: 0.6,
+  };
+  const decision = await resolveIdentityWithEvidence(
+    { observation, candidates: [candidate], event },
+    async () => null,
+  );
+  assert.deepEqual(decision, resolveIdentity(observation, [candidate]));
+});
+
+test("multiple plausible same-name candidates remain in review", async () => {
+  const observation: PersonObservation = {
+    displayName: "Alex Kim",
+    sourceUrl: "https://example.test/alex-kim",
+    identities: [{ provider: "website", externalId: "alex-kim-page" }],
+  };
+  const candidates: IdentityCandidate[] = ["11", "12"].map((id) => ({
+    id,
+    displayName: "Alex Kim",
+    identities: [{ provider: "roster-page", externalId: `ioi-alex-kim-${id}` }],
+  }));
+  const event = {
+    idempotencyKey: "alex-kim-page",
+    source: "brave-enrichment" as const,
+    sourceExternalId: "alex-kim-page",
+    type: "profile_observed" as const,
+    title: "Alex Kim profile",
+    occurredAt: "2026-08-01T00:00:00.000Z",
+    discoveredAt: "2026-08-05T00:00:00.000Z",
+    sourceUrl: observation.sourceUrl,
+    evidence: [{ label: "Public page", url: observation.sourceUrl }],
+    person: observation,
+    confidence: 0.6,
+  };
+  let calls = 0;
+  const decision = await resolveIdentityWithEvidence(
+    { observation, candidates, event },
+    async () => {
+      calls += 1;
+      return {
+        verdict: calls === 1 ? "match" : "review",
+        decision: calls === 1 ? "match" : "review",
+        confidence: 0.84,
+        corroboratingSignals: [{
+          category: "education",
+          candidateEvidence: "Example University",
+          observedEvidence: "Example University",
+        }],
+        conflicts: [],
+        summary: "Plausible but not unique.",
+      };
+    },
+  );
+  assert.equal(decision.action, "review");
+  if (decision.action === "review") {
+    assert.deepEqual(decision.possibleCandidateIds, ["11", "12"]);
+  }
 });
 
 test("an unverified cross-profile identifier is proposed for review, not merged", () => {

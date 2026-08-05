@@ -1,3 +1,8 @@
+import {
+  identityMatchModelName,
+  reviewIdentityEvidenceMatch,
+  type IdentityMatchDecision,
+} from "@/lib/ai/identity-match";
 import { stableHash } from "../idempotency";
 import { normalizeLinkedInMemberUrl } from "../linkedin-policy";
 import { smartFetch } from "../http";
@@ -123,6 +128,27 @@ export function namesRoughlyMatch(left: string, right: string) {
   return shared >= Math.min(2, leftTokens.length);
 }
 
+export function licensedFuzzyLookupAnchor(person: PersonObservation) {
+  const affiliation = (person.affiliations ?? [])
+    .map((value) => sanitizePlainText(value, 200))
+    .find(Boolean);
+  const location = sanitizePlainText(person.location, 300);
+  if (!affiliation) return location ? { location } : {};
+  const academic = /\b(university|universities|institute|college|school|academy|polytech|laboratory|laboratories|lab)\b/i.test(
+    affiliation,
+  );
+  const rosterSourced = person.identities.some(
+    (identity) => identity.provider === "roster-page",
+  );
+  if (rosterSourced && !academic) {
+    return { location: location || affiliation };
+  }
+  return {
+    ...(academic ? { school: affiliation } : { company: affiliation }),
+    ...(location ? { location } : {}),
+  };
+}
+
 function describeLicensedProfile(profile: NonNullable<ReturnType<typeof parseLicensedProfile>>) {
   const sections = [
     profile.experienceLines.length ? `Work history: ${profile.experienceLines.join("; ")}` : "",
@@ -166,10 +192,7 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
         .map((identity) => normalizeLinkedInMemberUrl(identity.profileUrl))
         .find((value): value is string => Boolean(value)) ?? null;
     const name = sanitizePlainText(context.person.displayName, 200);
-    const affiliation = (context.person.affiliations ?? [])
-      .map((value) => sanitizePlainText(value, 200))
-      .find(Boolean);
-    const location = sanitizePlainText(context.person.location, 300);
+    const fuzzyAnchor = licensedFuzzyLookupAnchor(context.person);
     const minLikelihood = Math.min(
       10,
       Math.max(1, Math.floor(asNumber(context.settings.options?.minLikelihood, DEFAULT_MIN_LIKELIHOOD))),
@@ -182,15 +205,14 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
     } else {
       // A fuzzy lookup needs a plausible human name plus at least one
       // corroborating anchor, or common names would bill for wrong people.
-      if (name.split(/\s+/).filter(Boolean).length < 2 || (!affiliation && !location)) return null;
+      if (
+        name.split(/\s+/).filter(Boolean).length < 2 ||
+        !Object.keys(fuzzyAnchor).length
+      ) return null;
       endpoint.searchParams.set("name", name);
-      // Scholarly-sourced affiliations are usually institutions; the provider
-      // matches those on its school field, not employer.
-      if (affiliation) {
-        const academic = /\b(universit|institute|college|school|academy|polytech|laborator)\b/i.test(affiliation);
-        endpoint.searchParams.set(academic ? "school" : "company", affiliation);
+      for (const [key, value] of Object.entries(fuzzyAnchor)) {
+        endpoint.searchParams.set(key, value);
       }
-      if (location) endpoint.searchParams.set("location", location);
     }
 
     const response = await smartFetch(endpoint.toString(), {
@@ -217,12 +239,30 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
       };
     }
     const exact = Boolean(linkedInUrl && profile.linkedInUrl === linkedInUrl);
-    if (!exact && !namesRoughlyMatch(profile.fullName, name)) {
+    let modelReview: IdentityMatchDecision | null = null;
+    if (!exact) {
+      modelReview = await reviewIdentityEvidenceMatch({
+        person: context.person,
+        evidenceEvents: context.evidenceEvents ?? [],
+        observed: {
+          url: profile.linkedInUrl ?? context.person.sourceUrl,
+          title: profile.fullName,
+          description: profile.headline,
+          content: describeLicensedProfile(profile),
+        },
+        signal: context.signal,
+      });
+    }
+    if (!exact && !modelReview && !namesRoughlyMatch(profile.fullName, name)) {
       return {
         events: [],
         warnings: [`A licensed match for ${name} was discarded because the returned name did not correspond.`],
       };
     }
+    const modelMatched = modelReview?.decision === "match";
+    const modelFlagged = Boolean(modelReview && !modelMatched);
+    const modelConfidence = modelReview?.confidence ?? 0;
+    const profileAccepted = exact || modelMatched;
 
     const linkedInIdentity = profile.linkedInUrl
       ? [{
@@ -231,7 +271,11 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
           profileUrl: profile.linkedInUrl,
           username: new URL(profile.linkedInUrl).pathname.split("/").filter(Boolean).at(-1),
           verified: exact,
-          confidence: exact ? 0.95 : clamp(likelihood / 10, 0, 0.85),
+          confidence: exact
+            ? 0.95
+            : modelMatched
+              ? Math.min(0.9, modelConfidence)
+              : clamp(likelihood / 10, 0, 0.75),
           proof: "provider-api" as const,
           proofSourceUrl: profile.linkedInUrl,
         }]
@@ -256,13 +300,38 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
             ),
         ),
       ].slice(0, 16),
-      headline: context.person.headline || profile.headline,
-      biography: context.person.biography || profile.summary,
-      location: context.person.location || profile.location,
-      affiliations: [
-        ...new Set([...(context.person.affiliations ?? []), ...profile.affiliations]),
-      ].slice(0, 12),
+      headline: profileAccepted
+        ? context.person.headline || profile.headline
+        : context.person.headline,
+      biography: profileAccepted
+        ? context.person.biography || profile.summary
+        : context.person.biography,
+      location: profileAccepted
+        ? context.person.location || profile.location
+        : context.person.location,
+      affiliations: profileAccepted
+        ? [
+            ...new Set([...(context.person.affiliations ?? []), ...profile.affiliations]),
+          ].slice(0, 12)
+        : context.person.affiliations,
     };
+
+    const modelDecisionTag = modelReview
+      ? modelMatched
+        ? "model-corroborated-identity"
+        : modelReview.decision === "review"
+          ? "model-identity-review"
+          : "model-identity-conflict"
+      : null;
+    const confidence = exact
+      ? 0.92
+      : modelMatched
+        ? Math.min(0.9, Math.max(0.8, modelConfidence))
+        : modelFlagged
+          ? modelReview?.decision === "reject"
+            ? Math.min(0.3, modelConfidence)
+            : Math.min(0.64, Math.max(0.35, modelConfidence))
+          : clamp(0.35 + likelihood / 20, 0, 0.75);
 
     return {
       events: [
@@ -272,22 +341,36 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
           type: "profile_observed",
           title: exact
             ? `${context.person.displayName}'s licensed work history was imported`
-            : `A likely work history for ${context.person.displayName} was licensed for review`,
+            : modelMatched
+              ? `${context.person.displayName}'s licensed work history was corroborated`
+              : modelReview?.decision === "reject"
+                ? `A conflicting licensed profile for ${context.person.displayName} was flagged`
+                : `A likely work history for ${context.person.displayName} was licensed for review`,
           description: describeLicensedProfile(profile) || profile.headline,
           sourceUrl: profile.linkedInUrl ?? context.person.sourceUrl,
           person,
           tags: [
             "licensed-data",
-            exact ? "verified-provider-subject" : "requires-corroboration",
+            exact ? "verified-provider-subject" : modelDecisionTag ?? "requires-corroboration",
+            ...(!exact && !modelMatched ? ["requires-corroboration"] : []),
           ],
           raw: {
             provider: "people-data-labs",
             likelihood,
-            matchedBy: exact ? "linkedin-profile" : "name-and-anchor",
+            matchedBy: exact
+              ? "linkedin-profile"
+              : modelMatched
+                ? "model-corroborated-evidence"
+                : "name-and-anchor-review",
+            identityReview: modelReview ?? undefined,
+            identityModel: modelReview
+              ? identityMatchModelName()
+              : undefined,
+            identityPromptVersion: modelReview ? "identity-evidence-v1" : undefined,
             retrievedAt: context.now.toISOString(),
             contactFieldsStored: false,
           },
-          confidence: exact ? 0.92 : clamp(0.35 + likelihood / 20, 0, 0.85),
+          confidence,
           now: context.now,
         }),
       ],

@@ -234,6 +234,7 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
     );
     return candidates.flatMap((candidate): IdentityCandidate[] => {
       if (!candidate) return [];
+      const observedCandidate = candidatePerson(candidate);
       const exactObservedIdentities = resolved.flatMap(({ identity, resolution }) =>
         resolution.matches.some(
           (match) => match.candidateId === candidate.id && match.exactProviderMatch,
@@ -241,7 +242,7 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
           ? [identity]
           : [],
       );
-      const candidateIdentities = candidatePerson(candidate).identities;
+      const candidateIdentities = observedCandidate.identities;
       const seen = new Set<string>();
       const combinedIdentities = [...exactObservedIdentities, ...candidateIdentities].filter(
         (identity) => {
@@ -255,9 +256,17 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
         id: candidate.id,
         displayName: candidate.name,
         identities: combinedIdentities,
-        affiliations: candidate.school ? [candidate.school] : undefined,
+        affiliations: candidate.affiliations?.length
+          ? candidate.affiliations
+          : candidate.school
+            ? [candidate.school]
+            : undefined,
         location: candidate.location,
         websiteUrl: candidate.websiteUrl,
+        person: observedCandidate,
+        evidenceEvents: candidate.events
+          .slice(0, 12)
+          .map((event) => domainEvent(event, observedCandidate)),
       }];
     });
   }
