@@ -57,9 +57,10 @@ function eventPriority(event: DiscoveryEvent) {
   );
 }
 
-async function persistObservedEvents(input: {
+export async function persistObservedEvents(input: {
   repository: DiscoveryRepository;
   workspaceId: string;
+  runId: string;
   events: DiscoveryEvent[];
   aiSummaryKeys: Set<string>;
 }) {
@@ -113,6 +114,7 @@ async function persistObservedEvents(input: {
       : fallbackEventSummary(event);
     const stored = await input.repository.upsertEvent({
       workspaceId: input.workspaceId,
+      runId: input.runId,
       candidateId: persisted.candidateId,
       event,
       summary,
@@ -367,6 +369,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
     const persisted = await persistObservedEvents({
       repository: options.repository,
       workspaceId: options.workspaceId,
+      runId,
       events,
       aiSummaryKeys: allocateAiSummaryKeys(events),
     });
@@ -418,6 +421,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
     const enrichedPersisted = await persistObservedEvents({
       repository: options.repository,
       workspaceId: options.workspaceId,
+      runId,
       events: enrichedEvents,
       aiSummaryKeys: allocateAiSummaryKeys(enrichedEvents),
     });
@@ -496,6 +500,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
     const graphPersisted = await persistObservedEvents({
       repository: options.repository,
       workspaceId: options.workspaceId,
+      runId,
       events: graphEvents,
       aiSummaryKeys: allocateAiSummaryKeys(graphEvents),
     });
@@ -532,6 +537,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
     const graphEnrichedPersisted = await persistObservedEvents({
       repository: options.repository,
       workspaceId: options.workspaceId,
+      runId,
       events: graphEnrichedEvents,
       aiSummaryKeys: allocateAiSummaryKeys(graphEnrichedEvents),
     });

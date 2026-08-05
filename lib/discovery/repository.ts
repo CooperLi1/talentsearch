@@ -46,6 +46,7 @@ export interface DiscoveryRepository {
   }): Promise<{ candidateId: string; created: boolean; reviewQueued: boolean }>;
   upsertEvent(input: {
     workspaceId: string;
+    runId: string;
     candidateId: string;
     event: DiscoveryEvent;
     summary: EventSummary;

@@ -1886,9 +1886,10 @@ export async function reviewIdentityCandidate(input: ReviewIdentityCandidateInpu
 
 export async function insertCandidateEvent(input: InsertCandidateEventInput) {
   const client = db(); const wid = workspaceId(input.workspaceId);
-  const existing = await client.from("events").select("id").eq("workspace_id", wid).eq("content_hash", input.contentHash).maybeSingle(); fail(existing.error);
+  const existing = await client.from("events").select("id,run_id").eq("workspace_id", wid).eq("content_hash", input.contentHash).maybeSingle(); fail(existing.error);
   if (existing.data) {
-    const eventId = String((existing.data as Record<string, unknown>).id);
+    const existingRow = existing.data as Record<string, unknown>;
+    const eventId = String(existingRow.id);
     const result = await client.from("events").update({
       title: input.title,
       occurred_at: input.occurredAt,
@@ -1898,6 +1899,7 @@ export async function insertCandidateEvent(input: InsertCandidateEventInput) {
       evidence_excerpt: input.evidenceExcerpt,
       confidence: input.confidence,
       raw_payload: input.rawPayload ?? {},
+      ...(existingRow.run_id == null && input.runId ? { run_id: Number(input.runId) } : {}),
     } as never).eq("workspace_id", wid).eq("id", Number(eventId));
     fail(result.error);
     return { eventId, inserted: false };

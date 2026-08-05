@@ -457,6 +457,7 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
   async upsertEvent(input: Parameters<DiscoveryRepository["upsertEvent"]>[0]) {
     const stored = await insertCandidateEvent({
       workspaceId: input.workspaceId,
+      runId: input.runId,
       candidateId: input.candidateId,
       eventType: input.event.type,
       title: input.event.title,
