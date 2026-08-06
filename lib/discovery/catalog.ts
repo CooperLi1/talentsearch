@@ -232,7 +232,7 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     defaultEnabled: false,
     description: "Uses Brave only to locate public pages after a candidate exists, then verifies evidence on the publisher page before storing it.",
     officialHome: "https://api-dashboard.search.brave.com/app/documentation/web-search/get-started",
-    configTemplate: { enabled: false, maxItems: 8, options: { maxQueries: 2, maxResults: 8 } },
+    configTemplate: { enabled: false, maxItems: 8, options: { maxQueries: 3, maxResults: 8 } },
   },
   {
     key: "linkedin",

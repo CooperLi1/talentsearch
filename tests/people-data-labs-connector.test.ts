@@ -90,13 +90,13 @@ test("fuzzy lookups require a human name plus an affiliation or location anchor"
   }
 });
 
-test("fuzzy PDL lookups are disabled by default before spending a credit", async () => {
+test("fuzzy PDL lookups can be explicitly disabled before spending a credit", async () => {
   const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
   const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
   const originalFetch = globalThis.fetch;
   let requests = 0;
   process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
-  delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+  process.env.PDL_ALLOW_FUZZY_LOOKUPS = "false";
   globalThis.fetch = async () => {
     requests += 1;
     throw new Error("PDL should not have been called");
@@ -104,6 +104,32 @@ test("fuzzy PDL lookups are disabled by default before spending a credit", async
   try {
     assert.equal(await new PeopleDataLabsConnector().enrich(enrichmentContext()), null);
     assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
+    else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
+    if (previousFuzzy === undefined) delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+    else process.env.PDL_ALLOW_FUZZY_LOOKUPS = previousFuzzy;
+  }
+});
+
+test("anchored fuzzy PDL recovery defaults to the stricter provider likelihood", async () => {
+  const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
+  const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
+  delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+  globalThis.fetch = async (input) => {
+    requestedUrl = String(input);
+    return new Response(null, { status: 404 });
+  };
+  try {
+    assert.deepEqual(await new PeopleDataLabsConnector().enrich(enrichmentContext()), { events: [] });
+    const request = new URL(requestedUrl);
+    assert.equal(request.searchParams.get("name"), "Reviewed Person");
+    assert.equal(request.searchParams.get("school"), "Example University");
+    assert.equal(request.searchParams.get("min_likelihood"), "9");
   } finally {
     globalThis.fetch = originalFetch;
     if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;

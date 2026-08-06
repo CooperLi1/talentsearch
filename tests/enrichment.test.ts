@@ -352,9 +352,9 @@ test("metered provider defaults preserve monthly headroom and allow explicit shu
   delete process.env.PDL_DAILY_REQUEST_LIMIT;
   delete process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE;
   try {
-    assert.equal(providerDailyRequestLimit("brave-search"), 24);
-    assert.equal(providerDailyRequestLimit("people-data-labs"), 3);
-    assert.equal(braveQueryCap(), 2);
+    assert.equal(providerDailyRequestLimit("brave-search"), 48);
+    assert.equal(providerDailyRequestLimit("people-data-labs"), 6);
+    assert.equal(braveQueryCap(), 3);
     process.env.BRAVE_DAILY_REQUEST_LIMIT = "0";
     process.env.PDL_DAILY_REQUEST_LIMIT = "7";
     process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE = "99";

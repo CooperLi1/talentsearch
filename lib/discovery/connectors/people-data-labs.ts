@@ -200,14 +200,19 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
     );
 
     const endpoint = new URL(ENRICH_ENDPOINT);
-    endpoint.searchParams.set("min_likelihood", String(minLikelihood));
+    // Fuzzy matches spend a credit before our model can review the identity,
+    // so require a stronger provider-side match than an exact profile lookup.
+    endpoint.searchParams.set(
+      "min_likelihood",
+      String(linkedInUrl ? minLikelihood : Math.max(9, minLikelihood)),
+    );
     if (linkedInUrl) {
       endpoint.searchParams.set("profile", linkedInUrl);
     } else {
       // Fuzzy successful matches are billed before our identity model can
-      // reject them. Keep them explicitly opt-in; exact profile enrichment is
-      // both more useful and far less likely to spend a credit on the wrong person.
-      if (process.env.PDL_ALLOW_FUZZY_LOOKUPS !== "true") return null;
+      // reject them. Operators can disable them entirely, but the bounded
+      // default keeps LinkedIn recovery available for well-anchored people.
+      if (process.env.PDL_ALLOW_FUZZY_LOOKUPS === "false") return null;
       // A fuzzy lookup needs a plausible human name plus at least one
       // corroborating anchor, or common names would bill for wrong people.
       if (

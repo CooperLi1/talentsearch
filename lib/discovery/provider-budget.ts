@@ -9,8 +9,8 @@ const PROVIDER_LIMITS: Record<
   MeteredProvider,
   { env: "BRAVE_DAILY_REQUEST_LIMIT" | "PDL_DAILY_REQUEST_LIMIT"; fallback: number }
 > = {
-  "brave-search": { env: "BRAVE_DAILY_REQUEST_LIMIT", fallback: 24 },
-  "people-data-labs": { env: "PDL_DAILY_REQUEST_LIMIT", fallback: 3 },
+  "brave-search": { env: "BRAVE_DAILY_REQUEST_LIMIT", fallback: 48 },
+  "people-data-labs": { env: "PDL_DAILY_REQUEST_LIMIT", fallback: 6 },
 };
 
 function boundedInteger(value: string | undefined, fallback: number, maximum: number) {
