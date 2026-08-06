@@ -1009,7 +1009,7 @@ function safeSourceOptions(kind: string, value: unknown): EditableSourceOptions 
   }
   if (kind === "brave-enrichment") {
     return {
-      maxQueries: finiteInteger(options.maxQueries, 1, 5) ?? 5,
+      maxQueries: finiteInteger(options.maxQueries, 1, 5) ?? 2,
       maxResults: finiteInteger(options.maxResults, 1, 12) ?? 8,
     };
   }

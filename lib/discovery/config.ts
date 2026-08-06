@@ -303,7 +303,11 @@ const defaults: Record<SourceKind, ConnectorSettings> = {
     queries: [...RECOMMENDED_CONNECTOR_QUERIES.x],
   },
   "linkedin-manual": { enabled: false, maxItems: 100 },
-  "brave-enrichment": { enabled: Boolean(process.env.BRAVE_SEARCH_API_KEY), maxItems: 8 },
+  "brave-enrichment": {
+    enabled: Boolean(process.env.BRAVE_SEARCH_API_KEY),
+    maxItems: 8,
+    options: { maxQueries: 2, maxResults: 8 },
+  },
   "people-data-labs": {
     enabled: Boolean(process.env.PEOPLE_DATA_SEARCH_KEY?.trim()),
     maxItems: 5,

@@ -5,11 +5,14 @@ import * as cheerio from "cheerio";
 
 import { enrichPeople } from "../lib/discovery/enrichment";
 import {
+  braveQueryCap,
+  braveQuotaFromHeaders,
   candidateResearchQueries,
   hasCorroboratedPageIdentity,
   publicPageContent,
   projectLocatorContext,
 } from "../lib/discovery/connectors/brave-enrichment";
+import { providerDailyRequestLimit } from "../lib/discovery/provider-budget";
 import { ownedWorkProfileFromHtml } from "../lib/discovery/connectors/web-presence";
 import { crossProfileClaimForUrl } from "../lib/discovery/cross-profile-links";
 import type {
@@ -339,6 +342,47 @@ test("deep research rotates bounded query plans while retaining LinkedIn lookup"
   assert.ok(third.some((query) => query.includes("Ada Lovelace Example")));
   assert.notDeepEqual(first, second);
   assert.notDeepEqual(second, third);
+});
+
+test("metered provider defaults preserve monthly headroom and allow explicit shutdown", () => {
+  const previousBraveDaily = process.env.BRAVE_DAILY_REQUEST_LIMIT;
+  const previousPdlDaily = process.env.PDL_DAILY_REQUEST_LIMIT;
+  const previousQueryCap = process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE;
+  delete process.env.BRAVE_DAILY_REQUEST_LIMIT;
+  delete process.env.PDL_DAILY_REQUEST_LIMIT;
+  delete process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE;
+  try {
+    assert.equal(providerDailyRequestLimit("brave-search"), 24);
+    assert.equal(providerDailyRequestLimit("people-data-labs"), 3);
+    assert.equal(braveQueryCap(), 2);
+    process.env.BRAVE_DAILY_REQUEST_LIMIT = "0";
+    process.env.PDL_DAILY_REQUEST_LIMIT = "7";
+    process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE = "99";
+    assert.equal(providerDailyRequestLimit("brave-search"), 0);
+    assert.equal(providerDailyRequestLimit("people-data-labs"), 7);
+    assert.equal(braveQueryCap(), 5);
+  } finally {
+    if (previousBraveDaily === undefined) delete process.env.BRAVE_DAILY_REQUEST_LIMIT;
+    else process.env.BRAVE_DAILY_REQUEST_LIMIT = previousBraveDaily;
+    if (previousPdlDaily === undefined) delete process.env.PDL_DAILY_REQUEST_LIMIT;
+    else process.env.PDL_DAILY_REQUEST_LIMIT = previousPdlDaily;
+    if (previousQueryCap === undefined) delete process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE;
+    else process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE = previousQueryCap;
+  }
+});
+
+test("Brave quota parsing follows the longest provider window", () => {
+  const headers = new Headers({
+    "x-ratelimit-policy": "1;w=1, 1000;w=2592000",
+    "x-ratelimit-remaining": "0, 37",
+    "x-ratelimit-reset": "1, 864000",
+  });
+  assert.deepEqual(braveQuotaFromHeaders(headers), {
+    remaining: 37,
+    resetSeconds: 864000,
+    windowSeconds: 2592000,
+  });
+  assert.equal(braveQuotaFromHeaders(new Headers()), null);
 });
 
 test("public page parsing falls back to body content on legacy profile pages", () => {

@@ -15,8 +15,18 @@ services:
         value: "1"
       - key: BRAVE_SEARCH_API_KEY
         sync: false
+      - key: BRAVE_DAILY_REQUEST_LIMIT
+        value: "24"
+      - key: BRAVE_MAX_QUERIES_PER_CANDIDATE
+        value: "2"
+      - key: BRAVE_MONTHLY_REQUEST_RESERVE
+        value: "25"
       - key: PEOPLE_DATA_SEARCH_KEY
         sync: false
+      - key: PDL_DAILY_REQUEST_LIMIT
+        value: "3"
+      - key: PDL_ALLOW_FUZZY_LOOKUPS
+        value: "false"
       - key: GITHUB_TOKEN
         sync: false
       - key: GITLAB_TOKEN

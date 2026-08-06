@@ -6,6 +6,7 @@ import {
 import { stableHash } from "../idempotency";
 import { normalizeLinkedInMemberUrl } from "../linkedin-policy";
 import { smartFetch } from "../http";
+import { consumeProviderDailyBudget } from "../provider-budget";
 import { sanitizePlainText } from "../security";
 import type {
   ConnectorEnrichmentContext,
@@ -203,6 +204,10 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
     if (linkedInUrl) {
       endpoint.searchParams.set("profile", linkedInUrl);
     } else {
+      // Fuzzy successful matches are billed before our identity model can
+      // reject them. Keep them explicitly opt-in; exact profile enrichment is
+      // both more useful and far less likely to spend a credit on the wrong person.
+      if (process.env.PDL_ALLOW_FUZZY_LOOKUPS !== "true") return null;
       // A fuzzy lookup needs a plausible human name plus at least one
       // corroborating anchor, or common names would bill for wrong people.
       if (
@@ -215,16 +220,27 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
       }
     }
 
+    const budget = await consumeProviderDailyBudget("people-data-labs");
+    if (!budget.allowed) {
+      return {
+        events: [],
+        warnings: [`People Data Labs daily request budget is exhausted; it resets at ${budget.resetAt}.`],
+      };
+    }
+
     const response = await smartFetch(endpoint.toString(), {
       headers: { accept: "application/json", "x-api-key": apiKey },
       rateLimitPerSecond: 1,
       timeoutMs: 12_000,
-      retries: 1,
+      retries: 0,
       maxBytes: 2_000_000,
       signal: context.signal,
     });
     // 404 is the provider's unbilled no-match answer, not a failure.
     if (response.status === 404) return { events: [] };
+    if (response.status === 402) {
+      throw new Error("People Data Labs account credits are exhausted (HTTP 402)");
+    }
     if (!response.ok) throw new Error(`People Data Labs returned HTTP ${response.status}`);
     const payload = (await response.json()) as PdlResponse;
     const likelihood = clamp(asNumber(payload.likelihood, 0), 0, 10);

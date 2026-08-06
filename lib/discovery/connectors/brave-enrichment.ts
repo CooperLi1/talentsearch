@@ -11,8 +11,9 @@ import {
   resolveCrossProfileClaims,
   type CrossProfileClaim,
 } from "../cross-profile-links";
-import { fetchJson, smartFetch } from "../http";
+import { smartFetch } from "../http";
 import { stableHash } from "../idempotency";
+import { consumeProviderDailyBudget } from "../provider-budget";
 import { assertPublicHttpUrl, sanitizePlainText } from "../security";
 import type {
   ConnectorEnrichmentContext,
@@ -30,14 +31,16 @@ type ProfileLocator = {
   queryHashes: Set<string>;
 };
 class BraveRateLimitError extends Error {
-  constructor() {
-    super("Brave Search is rate-limited; public-web enrichment is paused for 15 minutes");
+  constructor(message = "Brave Search is rate-limited; public-web enrichment is paused") {
+    super(message);
     this.name = "BraveRateLimitError";
   }
 }
 const locatorCache = new Map<string, CachedLocator>();
 let braveRateLimitedUntil = 0;
 let braveSearchGate = Promise.resolve();
+const DEFAULT_QUERY_CAP = 2;
+const DEFAULT_MONTHLY_RESERVE = 25;
 // Provider-native connectors already collect GitHub, GitLab, and HN evidence
 // with stronger identity guarantees. Brave keeps their direct account URLs as
 // hypotheses but does not spend the page-verification budget re-fetching their
@@ -101,6 +104,49 @@ function comparableUrl(value: string) {
   } catch {
     return "";
   }
+}
+
+function boundedEnvironmentInteger(value: string | undefined, fallback: number, maximum: number) {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(0, Math.floor(parsed)));
+}
+
+export function braveQueryCap() {
+  return boundedEnvironmentInteger(
+    process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE,
+    DEFAULT_QUERY_CAP,
+    5,
+  );
+}
+
+export function braveQuotaFromHeaders(headers: Headers) {
+  const policies = (headers.get("x-ratelimit-policy") ?? "")
+    .split(",")
+    .map((value) => Number(value.match(/;w=(\d+)/)?.[1] ?? 0));
+  const remaining = (headers.get("x-ratelimit-remaining") ?? "")
+    .split(",")
+    .map((value) => Number(value.trim()));
+  const resets = (headers.get("x-ratelimit-reset") ?? "")
+    .split(",")
+    .map((value) => Number(value.trim()));
+  const indexes = policies
+    .map((windowSeconds, index) => ({ index, windowSeconds }))
+    .filter(({ windowSeconds, index }) =>
+      Number.isFinite(windowSeconds) &&
+      windowSeconds > 0 &&
+      Number.isFinite(remaining[index]) &&
+      Number.isFinite(resets[index]),
+    )
+    .sort((left, right) => right.windowSeconds - left.windowSeconds);
+  const quota = indexes[0];
+  if (!quota) return null;
+  return {
+    remaining: Math.max(0, remaining[quota.index]!),
+    resetSeconds: Math.max(1, resets[quota.index]!),
+    windowSeconds: quota.windowSeconds,
+  };
 }
 
 export function hasCorroboratedPageIdentity(input: {
@@ -219,32 +265,48 @@ async function locate(query: string, count: number, signal?: AbortSignal) {
   await previous;
   try {
     if (Date.now() < braveRateLimitedUntil) throw new BraveRateLimitError();
+    const budget = await consumeProviderDailyBudget("brave-search");
+    if (!budget.allowed) {
+      throw new BraveRateLimitError(
+        `Brave Search daily request budget is exhausted; it resets at ${budget.resetAt}`,
+      );
+    }
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
     url.searchParams.set("q", query);
     url.searchParams.set("count", String(Math.min(20, count)));
     url.searchParams.set("safesearch", "strict");
     url.searchParams.set("text_decorations", "false");
-    let response: BraveResponse;
-    try {
-      response = await fetchJson<BraveResponse>(url.toString(), {
-        headers: {
-          accept: "application/json",
-          "x-subscription-token": process.env.BRAVE_SEARCH_API_KEY!,
-        },
-        signal,
-        rateLimitPerSecond: 0.5,
-        // The connector-level circuit breaker handles 429s. Retrying here would
-        // spend another quota request before the cooldown can take effect.
-        retries: 0,
-        timeoutMs: 8_000,
-        maxBytes: 1_500_000,
-      });
-    } catch (error) {
-      if (error instanceof Error && /HTTP 429 from api\.search\.brave\.com/i.test(error.message)) {
-        braveRateLimitedUntil = Date.now() + 15 * 60 * 1_000;
-        throw new BraveRateLimitError();
-      }
-      throw error;
+    const rawResponse = await smartFetch(url.toString(), {
+      headers: {
+        accept: "application/json",
+        "x-subscription-token": process.env.BRAVE_SEARCH_API_KEY!,
+      },
+      signal,
+      rateLimitPerSecond: 0.5,
+      // The connector-level circuit breaker handles 429s. Retrying here would
+      // spend another request before the cooldown can take effect.
+      retries: 0,
+      timeoutMs: 8_000,
+      maxBytes: 1_500_000,
+    });
+    const quota = braveQuotaFromHeaders(rawResponse.headers);
+    if (rawResponse.status === 429) {
+      braveRateLimitedUntil = Date.now() + (quota?.resetSeconds ?? 15 * 60) * 1_000;
+      throw new BraveRateLimitError(
+        quota
+          ? `Brave Search quota is exhausted; provider reset is in ${quota.resetSeconds} seconds`
+          : undefined,
+      );
+    }
+    if (!rawResponse.ok) throw new Error(`Brave Search returned HTTP ${rawResponse.status}`);
+    const response = (await rawResponse.json()) as BraveResponse;
+    const monthlyReserve = boundedEnvironmentInteger(
+      process.env.BRAVE_MONTHLY_REQUEST_RESERVE,
+      DEFAULT_MONTHLY_RESERVE,
+      10_000,
+    );
+    if (quota && quota.remaining <= monthlyReserve) {
+      braveRateLimitedUntil = Date.now() + quota.resetSeconds * 1_000;
     }
     // Brave content is only a transient locator. Only normalized result URLs survive this function.
     const urls = [
@@ -271,7 +333,12 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
 
   async enrich(context: ConnectorEnrichmentContext): Promise<ConnectorRunResult | null> {
     if (!process.env.BRAVE_SEARCH_API_KEY) return null;
-    const maxQueries = Math.min(5, Math.max(1, Number(context.settings.options?.maxQueries ?? 5)));
+    const queryCap = braveQueryCap();
+    if (queryCap === 0) return null;
+    const maxQueries = Math.min(
+      queryCap,
+      Math.min(5, Math.max(1, Number(context.settings.options?.maxQueries ?? DEFAULT_QUERY_CAP))),
+    );
     const maxResults = Math.min(12, Math.max(1, Number(context.settings.options?.maxResults ?? 8)));
     const knownWebsiteHost = safeHostname(context.person.websiteUrl)?.toLowerCase();
     const projects = projectLocatorContext(context.evidenceEvents ?? []);

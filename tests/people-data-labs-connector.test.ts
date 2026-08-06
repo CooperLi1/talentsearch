@@ -70,7 +70,9 @@ test("enrichment stays inert without a key and never issues a request", async ()
 
 test("fuzzy lookups require a human name plus an affiliation or location anchor", async () => {
   const previous = process.env.PEOPLE_DATA_SEARCH_KEY;
+  const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
   process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
+  process.env.PDL_ALLOW_FUZZY_LOOKUPS = "true";
   try {
     const connector = new PeopleDataLabsConnector();
     const singleToken = enrichmentContext();
@@ -83,6 +85,31 @@ test("fuzzy lookups require a human name plus an affiliation or location anchor"
   } finally {
     if (previous === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
     else process.env.PEOPLE_DATA_SEARCH_KEY = previous;
+    if (previousFuzzy === undefined) delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+    else process.env.PDL_ALLOW_FUZZY_LOOKUPS = previousFuzzy;
+  }
+});
+
+test("fuzzy PDL lookups are disabled by default before spending a credit", async () => {
+  const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
+  const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
+  delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+  globalThis.fetch = async () => {
+    requests += 1;
+    throw new Error("PDL should not have been called");
+  };
+  try {
+    assert.equal(await new PeopleDataLabsConnector().enrich(enrichmentContext()), null);
+    assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
+    else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
+    if (previousFuzzy === undefined) delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
+    else process.env.PDL_ALLOW_FUZZY_LOOKUPS = previousFuzzy;
   }
 });
 
