@@ -8,6 +8,7 @@ import {
   namesRoughlyMatch,
   parseLicensedProfile,
   PeopleDataLabsConnector,
+  shouldBindLicensedProfileIdentity,
 } from "../lib/discovery/connectors/people-data-labs";
 import type { ConnectorEnrichmentContext } from "../lib/discovery/types";
 
@@ -220,6 +221,13 @@ test("fuzzy-match name correspondence tolerates ordering but rejects other peopl
   assert.equal(namesRoughlyMatch("Reviewed Q. Person", "Reviewed Person"), true);
   assert.equal(namesRoughlyMatch("Somebody Else", "Reviewed Person"), false);
   assert.equal(namesRoughlyMatch("", "Reviewed Person"), false);
+});
+
+test("licensed LinkedIn identities bind only after exact or model-accepted matching", () => {
+  assert.equal(shouldBindLicensedProfileIdentity(true), true);
+  assert.equal(shouldBindLicensedProfileIdentity(false, "match"), true);
+  assert.equal(shouldBindLicensedProfileIdentity(false, "review"), false);
+  assert.equal(shouldBindLicensedProfileIdentity(false, "reject"), false);
 });
 
 test("verified licensed profiles reach briefs; fuzzy matches stay excluded", async () => {

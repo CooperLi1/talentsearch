@@ -129,6 +129,13 @@ export function namesRoughlyMatch(left: string, right: string) {
   return shared >= Math.min(2, leftTokens.length);
 }
 
+export function shouldBindLicensedProfileIdentity(
+  exact: boolean,
+  modelDecision?: IdentityMatchDecision["decision"],
+) {
+  return exact || modelDecision === "match";
+}
+
 export function licensedFuzzyLookupAnchor(person: PersonObservation) {
   const affiliation = (person.affiliations ?? [])
     .map((value) => sanitizePlainText(value, 200))
@@ -283,7 +290,7 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
     const modelMatched = modelReview?.decision === "match";
     const modelFlagged = Boolean(modelReview && !modelMatched);
     const modelConfidence = modelReview?.confidence ?? 0;
-    const profileAccepted = exact || modelMatched;
+    const profileAccepted = shouldBindLicensedProfileIdentity(exact, modelReview?.decision);
 
     const linkedInIdentity = profile.linkedInUrl
       ? [{
@@ -291,7 +298,10 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
           externalId: stableHash(profile.linkedInUrl),
           profileUrl: profile.linkedInUrl,
           username: new URL(profile.linkedInUrl).pathname.split("/").filter(Boolean).at(-1),
-          verified: exact,
+          // The URL came from PDL's provider response. Bind it when the lookup
+          // was exact or when the grounded identity review accepted the match;
+          // review/reject outcomes must remain detached hypotheses.
+          verified: profileAccepted,
           confidence: exact
             ? 0.95
             : modelMatched
