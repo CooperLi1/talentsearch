@@ -32,6 +32,22 @@ test("independent education and project overlap can approve an identity match", 
   assert.equal(applyIdentityMatchPolicy(output()).decision, "match");
 });
 
+test("one strong overlap can approve a confident identity match", () => {
+  const strongOverlap = [{
+    category: "work" as const,
+    candidateEvidence: "Worked on the Atlas compiler at Example Labs",
+    observedEvidence: "Atlas compiler engineer at Example Labs",
+  }];
+  assert.equal(applyIdentityMatchPolicy(output({
+    confidence: 0.85,
+    corroboratingSignals: strongOverlap,
+  })).decision, "match");
+  assert.equal(applyIdentityMatchPolicy(output({
+    confidence: 0.84,
+    corroboratingSignals: strongOverlap,
+  })).decision, "review");
+});
+
 test("name and country alone remain reviewable rather than auto-matching", () => {
   const decision = applyIdentityMatchPolicy(output({
     confidence: 0.93,

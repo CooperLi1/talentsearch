@@ -114,7 +114,7 @@ test("fuzzy PDL lookups can be explicitly disabled before spending a credit", as
   }
 });
 
-test("anchored fuzzy PDL recovery defaults to the stricter provider likelihood", async () => {
+test("anchored fuzzy PDL recovery honors the configured provider likelihood", async () => {
   const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
   const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
   const originalFetch = globalThis.fetch;
@@ -130,7 +130,7 @@ test("anchored fuzzy PDL recovery defaults to the stricter provider likelihood",
     const request = new URL(requestedUrl);
     assert.equal(request.searchParams.get("name"), "Reviewed Person");
     assert.equal(request.searchParams.get("school"), "Example University");
-    assert.equal(request.searchParams.get("min_likelihood"), "9");
+    assert.equal(request.searchParams.get("min_likelihood"), "8");
   } finally {
     globalThis.fetch = originalFetch;
     if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;

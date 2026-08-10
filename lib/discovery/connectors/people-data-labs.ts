@@ -207,12 +207,10 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
     );
 
     const endpoint = new URL(ENRICH_ENDPOINT);
-    // Fuzzy matches spend a credit before our model can review the identity,
-    // so require a stronger provider-side match than an exact profile lookup.
-    endpoint.searchParams.set(
-      "min_likelihood",
-      String(linkedInUrl ? minLikelihood : Math.max(9, minLikelihood)),
-    );
+    // Every fuzzy result still passes through the grounded identity reviewer.
+    // Honor the configured provider threshold so a strong work, education, or
+    // project overlap can recover people that PDL scores below 9.
+    endpoint.searchParams.set("min_likelihood", String(minLikelihood));
     if (linkedInUrl) {
       endpoint.searchParams.set("profile", linkedInUrl);
     } else {

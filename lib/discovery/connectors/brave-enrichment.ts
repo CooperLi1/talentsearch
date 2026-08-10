@@ -40,7 +40,7 @@ const locatorCache = new Map<string, CachedLocator>();
 let braveRateLimitedUntil = 0;
 let braveSearchGate = Promise.resolve();
 const DEFAULT_QUERY_CAP = 3;
-const DEFAULT_MONTHLY_RESERVE = 10;
+const DEFAULT_MONTHLY_RESERVE = 0;
 // Provider-native connectors already collect GitHub, GitLab, and HN evidence
 // with stronger identity guarantees. Brave keeps their direct account URLs as
 // hypotheses but does not spend the page-verification budget re-fetching their

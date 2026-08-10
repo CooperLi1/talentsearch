@@ -344,7 +344,7 @@ test("deep research rotates bounded query plans while retaining LinkedIn lookup"
   assert.notDeepEqual(second, third);
 });
 
-test("metered provider defaults preserve monthly headroom and allow explicit shutdown", () => {
+test("metered provider defaults stay bounded and allow explicit shutdown", () => {
   const previousBraveDaily = process.env.BRAVE_DAILY_REQUEST_LIMIT;
   const previousPdlDaily = process.env.PDL_DAILY_REQUEST_LIMIT;
   const previousQueryCap = process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE;
@@ -352,8 +352,8 @@ test("metered provider defaults preserve monthly headroom and allow explicit shu
   delete process.env.PDL_DAILY_REQUEST_LIMIT;
   delete process.env.BRAVE_MAX_QUERIES_PER_CANDIDATE;
   try {
-    assert.equal(providerDailyRequestLimit("brave-search"), 48);
-    assert.equal(providerDailyRequestLimit("people-data-labs"), 6);
+    assert.equal(providerDailyRequestLimit("brave-search"), 56);
+    assert.equal(providerDailyRequestLimit("people-data-labs"), 7);
     assert.equal(braveQueryCap(), 3);
     process.env.BRAVE_DAILY_REQUEST_LIMIT = "0";
     process.env.PDL_DAILY_REQUEST_LIMIT = "7";

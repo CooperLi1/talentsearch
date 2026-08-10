@@ -76,7 +76,7 @@ export function applyIdentityMatchPolicy(output: IdentityMatchOutput): IdentityM
   ).length;
   const enoughSupport =
     (independentSignals.length >= 2 && strongSignalCount >= 1) ||
-    (independentSignals.length >= 1 && strongSignalCount >= 1 && output.confidence >= 0.9);
+    (independentSignals.length >= 1 && strongSignalCount >= 1 && output.confidence >= 0.85);
   const decision = output.verdict === "match"
     ? output.confidence >= 0.8 && conflicts.length === 0 && enoughSupport
       ? "match"
