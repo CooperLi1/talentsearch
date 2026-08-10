@@ -40,6 +40,7 @@ test("People Data Labs stays registered but disabled without a key", () => {
     }).connectors["people-data-labs"];
     assert.equal(settings?.enabled, false);
     assert.equal(getDefaultConnectorSettings()["people-data-labs"].maxItems, 5);
+    assert.equal(getDefaultConnectorSettings()["people-data-labs"].options?.minLikelihood, 7);
   } finally {
     if (previous !== undefined) process.env.PEOPLE_DATA_SEARCH_KEY = previous;
   }

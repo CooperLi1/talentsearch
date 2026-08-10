@@ -17,7 +17,7 @@ import type {
 import { asNumber, asStringArray, clamp, createDiscoveryEvent } from "./shared";
 
 const ENRICH_ENDPOINT = "https://api.peopledatalabs.com/v5/person/enrich";
-const DEFAULT_MIN_LIKELIHOOD = 8;
+const DEFAULT_MIN_LIKELIHOOD = 7;
 const DEFAULT_REFRESH_DAYS = 90;
 
 type PdlNamedEntity = { name?: unknown };
