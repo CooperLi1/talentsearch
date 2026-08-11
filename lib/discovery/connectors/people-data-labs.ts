@@ -17,7 +17,7 @@ import type {
 import { asNumber, asStringArray, clamp, createDiscoveryEvent } from "./shared";
 
 const ENRICH_ENDPOINT = "https://api.peopledatalabs.com/v5/person/enrich";
-const DEFAULT_MIN_LIKELIHOOD = 7;
+const DEFAULT_MIN_LIKELIHOOD = 6;
 const DEFAULT_REFRESH_DAYS = 90;
 
 type PdlNamedEntity = { name?: unknown };
@@ -129,19 +129,56 @@ export function namesRoughlyMatch(left: string, right: string) {
   return shared >= Math.min(2, leftTokens.length);
 }
 
+function normalizedHumanName(value: string) {
+  return value
+    .toLocaleLowerCase("en-US")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 export function shouldBindLicensedProfileIdentity(
   exact: boolean,
   modelDecision?: IdentityMatchDecision["decision"],
+  groundedRosterMatch = false,
 ) {
-  return exact || modelDecision === "match";
+  return exact || modelDecision === "match" || groundedRosterMatch;
 }
 
-export function licensedFuzzyLookupAnchor(person: PersonObservation) {
+function rosterLocationFromEvidence(
+  person: PersonObservation,
+  evidenceEvents: ConnectorEnrichmentContext["evidenceEvents"] = [],
+) {
+  const expectedName = normalizedHumanName(person.displayName);
+  for (const event of evidenceEvents ?? []) {
+    if (!event.tags?.includes("manual-roster-deep-dive")) continue;
+    const fields = (event.description ?? "").split("|").map((value) => value.trim());
+    const nameIndex = fields.findIndex(
+      (value) => normalizedHumanName(value) === expectedName,
+    );
+    const location = nameIndex >= 0 ? sanitizePlainText(fields[nameIndex + 1], 200) : "";
+    if (
+      location &&
+      !/^https?:/i.test(location) &&
+      !/^\d+(?:\.\d+)?%?$/.test(location)
+    ) return location;
+  }
+  return "";
+}
+
+export function licensedFuzzyLookupAnchor(
+  person: PersonObservation,
+  evidenceEvents: ConnectorEnrichmentContext["evidenceEvents"] = [],
+) {
   const affiliation = (person.affiliations ?? [])
     .map((value) => sanitizePlainText(value, 200))
-    .find(Boolean);
+    .find((value) => Boolean(value) && !/^https?:/i.test(value));
   const location = sanitizePlainText(person.location, 300);
-  if (!affiliation) return location ? { location } : {};
+  const rosterLocation = rosterLocationFromEvidence(person, evidenceEvents);
+  if (!affiliation) {
+    return location || rosterLocation ? { location: location || rosterLocation } : {};
+  }
   const academic = /\b(university|universities|institute|college|school|academy|polytech|laboratory|laboratories|lab)\b/i.test(
     affiliation,
   );
@@ -149,12 +186,34 @@ export function licensedFuzzyLookupAnchor(person: PersonObservation) {
     (identity) => identity.provider === "roster-page",
   );
   if (rosterSourced && !academic) {
-    return { location: location || affiliation };
+    return { location: location || rosterLocation || affiliation };
   }
   return {
     ...(academic ? { school: affiliation } : { company: affiliation }),
     ...(location ? { location } : {}),
   };
+}
+
+export function isGroundedRosterLicensedMatch(input: {
+  person: PersonObservation;
+  requestedName: string;
+  returnedName: string;
+  likelihood: number;
+  review: IdentityMatchDecision | null;
+}) {
+  if (!input.person.identities.some((identity) => identity.provider === "roster-page")) {
+    return false;
+  }
+  if (
+    input.likelihood < 7 ||
+    normalizedHumanName(input.requestedName) !== normalizedHumanName(input.returnedName) ||
+    input.review?.verdict !== "match" ||
+    input.review.confidence < 0.85 ||
+    input.review.conflicts.length > 0
+  ) return false;
+  return input.review.corroboratingSignals.some(
+    (signal) => !["name", "interests"].includes(signal.category),
+  );
 }
 
 function describeLicensedProfile(profile: NonNullable<ReturnType<typeof parseLicensedProfile>>) {
@@ -175,6 +234,8 @@ function describeLicensedProfile(profile: NonNullable<ReturnType<typeof parseLic
 export class PeopleDataLabsConnector implements DiscoveryConnector {
   readonly kind = "people-data-labs" as const;
   readonly displayName = "People Data Labs licensed profiles";
+
+  constructor(private readonly fetchProfile: typeof smartFetch = smartFetch) {}
 
   async discover(): Promise<ConnectorRunResult> {
     return { events: [], warnings: ["Licensed profile enrichment runs only after a candidate exists."] };
@@ -200,7 +261,10 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
         .map((identity) => normalizeLinkedInMemberUrl(identity.profileUrl))
         .find((value): value is string => Boolean(value)) ?? null;
     const name = sanitizePlainText(context.person.displayName, 200);
-    const fuzzyAnchor = licensedFuzzyLookupAnchor(context.person);
+    const fuzzyAnchor = licensedFuzzyLookupAnchor(
+      context.person,
+      context.evidenceEvents,
+    );
     const minLikelihood = Math.min(
       10,
       Math.max(1, Math.floor(asNumber(context.settings.options?.minLikelihood, DEFAULT_MIN_LIKELIHOOD))),
@@ -235,10 +299,11 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
       return {
         events: [],
         warnings: [`People Data Labs daily request budget is exhausted; it resets at ${budget.resetAt}.`],
+        retryAfter: budget.resetAt,
       };
     }
 
-    const response = await smartFetch(endpoint.toString(), {
+    const response = await this.fetchProfile(endpoint.toString(), {
       headers: { accept: "application/json", "x-api-key": apiKey },
       rateLimitPerSecond: 1,
       timeoutMs: 12_000,
@@ -285,10 +350,21 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
         warnings: [`A licensed match for ${name} was discarded because the returned name did not correspond.`],
       };
     }
-    const modelMatched = modelReview?.decision === "match";
+    const groundedRosterMatch = isGroundedRosterLicensedMatch({
+      person: context.person,
+      requestedName: name,
+      returnedName: profile.fullName,
+      likelihood,
+      review: modelReview,
+    });
+    const modelMatched = modelReview?.decision === "match" || groundedRosterMatch;
     const modelFlagged = Boolean(modelReview && !modelMatched);
     const modelConfidence = modelReview?.confidence ?? 0;
-    const profileAccepted = shouldBindLicensedProfileIdentity(exact, modelReview?.decision);
+    const profileAccepted = shouldBindLicensedProfileIdentity(
+      exact,
+      modelReview?.decision,
+      groundedRosterMatch,
+    );
 
     const linkedInIdentity = profile.linkedInUrl
       ? [{
@@ -389,7 +465,9 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
             matchedBy: exact
               ? "linkedin-profile"
               : modelMatched
-                ? "model-corroborated-evidence"
+                ? groundedRosterMatch
+                  ? "provider-and-model-corroborated-roster"
+                  : "model-corroborated-evidence"
                 : "name-and-anchor-review",
             identityReview: modelReview ?? undefined,
             identityModel: modelReview

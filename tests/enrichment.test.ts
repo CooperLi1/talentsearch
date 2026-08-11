@@ -229,6 +229,22 @@ test("enrichment warnings retain their connector for the run ledger", async () =
   }]);
 });
 
+test("provider reset times are preserved as per-person enrichment deferrals", async () => {
+  const resetAt = "2026-07-13T00:00:00.000Z";
+  const result = await enrichPeople({
+    people: [observation()],
+    connectors: new Map<SourceKind, DiscoveryConnector>([["people-data-labs", {
+      kind: "people-data-labs",
+      displayName: "PDL",
+      discover: async () => ({ events: [] }),
+      enrich: async () => ({ events: [], retryAfter: resetAt }),
+    }]]),
+    settings: { "people-data-labs": { enabled: true } },
+  });
+
+  assert.equal(result.results[0]?.retryAfter, resetAt);
+});
+
 test("bounded enrichment rotates native providers and reserves a slot for public search", async () => {
   const calls: SourceKind[] = [];
   const person = observation({

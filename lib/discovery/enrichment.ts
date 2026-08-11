@@ -86,7 +86,12 @@ export async function enrichPeople(input: {
   maxConnectorsPerPerson?: number;
   signal?: AbortSignal;
 }): Promise<{
-  results: Array<{ person: PersonObservation; events: DiscoveryEvent[]; edges: GraphEdge[] }>;
+  results: Array<{
+    person: PersonObservation;
+    events: DiscoveryEvent[];
+    edges: GraphEdge[];
+    retryAfter?: string;
+  }>;
   warnings: Array<{ source: SourceKind; message: string }>;
 }> {
   const now = input.now ?? new Date();
@@ -104,6 +109,7 @@ export async function enrichPeople(input: {
       const events: DiscoveryEvent[] = [];
       const evidenceEvents = [...(input.evidenceEvents?.[personIndex] ?? [])];
       const edges: GraphEdge[] = [];
+      let retryAfter: string | undefined;
       let enrichedPerson = person;
       const attempted = new Set<SourceKind>();
       const queued = new Set<SourceKind>();
@@ -206,6 +212,13 @@ export async function enrichPeople(input: {
               source: connector.kind,
               message: warning,
             })));
+            const retryAt = Date.parse(result.retryAfter ?? "");
+            if (
+              Number.isFinite(retryAt) &&
+              (!retryAfter || retryAt < Date.parse(retryAfter))
+            ) {
+              retryAfter = new Date(retryAt).toISOString();
+            }
             for (const event of result.events) {
               enrichedPerson = mergePersonObservation(enrichedPerson, event.person);
             }
@@ -219,7 +232,12 @@ export async function enrichPeople(input: {
           if (input.signal?.aborted) break;
         }
       }
-      return { person: enrichedPerson, events: deduplicateEvents(events), edges };
+      return {
+        person: enrichedPerson,
+        events: deduplicateEvents(events),
+        edges,
+        ...(retryAfter ? { retryAfter } : {}),
+      };
     },
   );
 

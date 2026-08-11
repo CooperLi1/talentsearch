@@ -139,6 +139,8 @@ export type ConnectorRunResult = {
   edges?: GraphEdge[];
   cursor?: ConnectorCursor;
   warnings?: string[];
+  /** Earliest useful retry time when a required provider was temporarily unavailable. */
+  retryAfter?: string;
 };
 
 export type ConnectorEnrichmentContext = {

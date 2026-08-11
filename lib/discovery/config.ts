@@ -312,7 +312,7 @@ const defaults: Record<SourceKind, ConnectorSettings> = {
     enabled: Boolean(process.env.PEOPLE_DATA_SEARCH_KEY?.trim()),
     maxItems: 5,
     lookbackDays: 90,
-    options: { minLikelihood: 7 },
+    options: { minLikelihood: 6 },
   },
 };
 

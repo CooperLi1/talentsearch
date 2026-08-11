@@ -376,6 +376,15 @@ export type Database = {
         };
         Returns: undefined;
       };
+      defer_candidate_enrichment_attempt: {
+        Args: {
+          p_workspace_id: number;
+          p_candidate_id: number;
+          p_retry_at: string;
+          p_research_revision: number;
+        };
+        Returns: undefined;
+      };
       candidate_graph_neighbors: {
         Args: {
           p_workspace_id: number;

@@ -23,6 +23,8 @@ export type EnrichmentTarget = {
   researchRevision?: number;
 };
 
+export type BriefReleaseStrategy = "transient" | "generation" | "new-evidence";
+
 export interface DiscoveryRepository {
   startRun(input: {
     workspaceId: string;
@@ -66,6 +68,7 @@ export interface DiscoveryRepository {
     eventCount: number;
     researchPass?: number;
     researchRevision?: number;
+    deferredUntil?: string;
   }): Promise<void>;
   listIntelligenceTargets(
     workspaceId: string,
@@ -78,6 +81,7 @@ export interface DiscoveryRepository {
   releaseCandidateBrief(
     workspaceId: string,
     candidateId: string,
+    strategy?: BriefReleaseStrategy,
   ): Promise<void>;
   listGraphExpansionSeeds(
     workspaceId: string,

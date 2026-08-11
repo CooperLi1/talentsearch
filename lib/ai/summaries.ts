@@ -259,7 +259,8 @@ export function candidateBriefContractIssues(
       }),
   );
   const lines = summaryMarkdown.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length < 2 || lines.length > 5) issues.add("line-count");
+  const minimumLines = supportsSingleFactBrief(events) ? 1 : 2;
+  if (lines.length < minimumLines || lines.length > 5) issues.add("line-count");
   for (const line of lines) {
     if (!/^[-*]\s+/.test(line)) issues.add("bullet-format");
     const links = [...line.matchAll(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/g)]
@@ -283,9 +284,28 @@ export function candidateBriefContractIssues(
   return [...issues];
 }
 
+export function supportsSingleFactBrief(events: DiscoveryEvent[]) {
+  const substantive = events.filter(isSubstantiveBriefEvent);
+  if (substantive.length !== 1) return false;
+  const [event] = substantive;
+  const recognition = `${event.title} ${event.description ?? ""} ${(event.tags ?? []).join(" ")}`;
+  return event.confidence >= 0.65 &&
+    [
+      "competition_result",
+      "hackathon_result",
+      "community_recognition",
+      "fellowship_or_grant",
+    ].includes(event.type) &&
+    (Number.isFinite(event.metrics?.rank) ||
+      /\b(?:gold|silver|bronze|medal(?:ist)?|winner|finalist|champion|fellowship|grant)\b/i.test(
+        recognition,
+      ));
+}
+
 function renderOperatorFacts(
   facts: Array<{ text: string; sourceIds: string[] }>,
   evidence: Array<{ evidenceId: string; url: string }>,
+  minimumFacts = 2,
 ) {
   const sourceById = new Map(evidence.map((item) => [item.evidenceId, item.url]));
   const lines = facts.flatMap((fact) => {
@@ -305,7 +325,7 @@ function renderOperatorFacts(
     const citations = urls.map((url, index) => `[Source${urls.length > 1 ? ` ${index + 1}` : ""}](${url})`).join(" ");
     return [`- ${text} ${citations}`];
   });
-  return lines.length >= 2 ? lines.slice(0, 5).join("\n") : null;
+  return lines.length >= minimumFacts ? lines.slice(0, 5).join("\n") : null;
 }
 
 function operatorFactPublisherCount(
@@ -466,8 +486,6 @@ export async function generateCandidateBrief(
   input: CandidateSummaryInput,
 ): Promise<CandidateSummary | null> {
   const { person, events, score, previousSummary } = input;
-  const model = resolveTextModel(process.env.AI_SUMMARY_MODEL || process.env.AI_MODEL);
-  if (!model) return null;
   const reject = (reason: string) => {
     console.warn("Candidate brief rejected", {
       reason,
@@ -485,6 +503,23 @@ export async function generateCandidateBrief(
       ...eventEvidence(event),
     }));
     if (!briefEvidence.length) return reject("no-substantive-evidence");
+    if (supportsSingleFactBrief(selectedBriefEvents)) {
+      const summary = renderOperatorFacts(
+        [{
+          text: sanitizePlainText(selectedBriefEvents[0]!.title, 190),
+          sourceIds: ["E1"],
+        }],
+        briefEvidence,
+        1,
+      );
+      if (!summary) return reject("single-fact-render-contract");
+      return {
+        ...fallbackCandidateSummary(person, events, score),
+        summary,
+      };
+    }
+    const model = resolveTextModel(process.env.AI_SUMMARY_MODEL || process.env.AI_MODEL);
+    if (!model) return null;
     const introductionEvidenceIds = selectedBriefEvents.flatMap((event, index) =>
       isCandidateIntroductionEvidence(event) ? [`E${index + 1}`] : [],
     );

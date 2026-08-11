@@ -2088,11 +2088,28 @@ export async function recordCandidateEnrichmentAttempt(input: {
   eventCount: number;
   researchPass?: number;
   researchRevision?: number;
+  deferredUntil?: string;
 }) {
   const eventCount = Math.max(0, Math.floor(input.eventCount));
   const attemptedAt = new Date(input.attemptedAt);
   if (!Number.isFinite(attemptedAt.getTime())) {
     throw new Error("Enrichment attempt time must be a valid timestamp");
+  }
+  const deferredUntil = input.deferredUntil
+    ? new Date(input.deferredUntil)
+    : null;
+  if (deferredUntil && !Number.isFinite(deferredUntil.getTime())) {
+    throw new Error("Enrichment deferral time must be a valid timestamp");
+  }
+  if (eventCount === 0 && deferredUntil && deferredUntil > attemptedAt) {
+    const deferred = await db().rpc("defer_candidate_enrichment_attempt", {
+      p_workspace_id: workspaceId(input.workspaceId),
+      p_candidate_id: Number(input.candidateId),
+      p_retry_at: deferredUntil.toISOString(),
+      p_research_revision: Math.max(0, Math.floor(input.researchRevision ?? 0)),
+    });
+    fail(deferred.error);
+    return;
   }
   const result = await db().rpc("complete_candidate_enrichment_attempt", {
     p_workspace_id: workspaceId(input.workspaceId),
@@ -2136,11 +2153,16 @@ export async function claimCandidateBriefingBacklog(
 export async function releaseCandidateBriefClaim(
   workspace: string | number,
   candidateId: string | number,
+  strategy: "transient" | "generation" | "new-evidence" = "transient",
 ) {
   if (!hasSupabaseAdminEnv()) return;
   // Generation and evidence-contract failures must not be reclaimed by every
   // half-hour worker. The claim column also acts as a durable retry-after time.
-  const retryAt = new Date(Date.now() + 6 * 60 * 60 * 1_000).toISOString();
+  const retryAt = strategy === "new-evidence"
+    ? "9999-12-31T23:59:59.000Z"
+    : new Date(
+        Date.now() + (strategy === "generation" ? 24 : 6) * 60 * 60 * 1_000,
+      ).toISOString();
   const { error } = await db()
     .from("candidates")
     .update({ brief_claimed_until: retryAt })

@@ -226,7 +226,11 @@ export async function runCandidateBriefBatch(input: {
       });
       if (!summary) {
         generationFailures += 1;
-        await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+        await input.repository.releaseCandidateBrief(
+          input.workspaceId,
+          target.id,
+          "generation",
+        );
         return null;
       }
       const contractIssues = candidateBriefContractIssues(summary.summary, events);
@@ -235,7 +239,11 @@ export async function runCandidateBriefBatch(input: {
         console.warn("Candidate brief contract rejected model output", {
           issues: target.briefEvidenceFingerprint ? contractIssues : ["missing-fingerprint"],
         });
-        await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+        await input.repository.releaseCandidateBrief(
+          input.workspaceId,
+          target.id,
+          "new-evidence",
+        );
         return null;
       }
       return {
@@ -250,7 +258,11 @@ export async function runCandidateBriefBatch(input: {
         }),
       };
     } catch (error) {
-      await input.repository.releaseCandidateBrief(input.workspaceId, target.id);
+      await input.repository.releaseCandidateBrief(
+        input.workspaceId,
+        target.id,
+        error instanceof ModelProviderUnavailableError ? "transient" : "generation",
+      );
       if (error instanceof ModelProviderUnavailableError) throw error;
       return null;
     }
@@ -443,6 +455,7 @@ export async function runDiscoveryBatch(options: RunOptions): Promise<DiscoveryR
         eventCount: enrichment.results[index]?.events.length ?? 0,
         researchPass: target.researchPass,
         researchRevision: target.researchRevision,
+        deferredUntil: enrichment.results[index]?.retryAfter,
       });
     });
     for (const candidateId of enrichedPersisted.affected.keys()) {

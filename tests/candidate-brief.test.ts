@@ -6,12 +6,14 @@ import {
   briefEvidencePriority,
   filterVerifiedOperatorFacts,
   hasUnsupportedAgencyClaim,
+  generateCandidateBrief,
   isSubstantiveBriefEvent,
   isCandidateIntroductionEvidence,
   isGroundedCandidateBrief,
   needsPlainLanguageRetry,
   operatorBriefStructureRules,
   selectDiverseBriefEvidence,
+  supportsSingleFactBrief,
 } from "@/lib/ai/summaries";
 import { operatorFactsGenerationSchema } from "@/lib/ai/schemas";
 import { briefEvidenceDescription } from "@/lib/candidates/brief-evidence";
@@ -46,6 +48,36 @@ test("candidate brief completion requires two source-linked grounded bullets", (
   assert.equal(isGroundedCandidateBrief(brief.replaceAll("github.com", "example.com"), [event]), false);
   assert.equal(isGroundedCandidateBrief(brief.split("\n").slice(0, 2).join("\n"), [event]), true);
   assert.equal(isGroundedCandidateBrief(brief.split("\n").slice(0, 1).join("\n"), [event]), false);
+});
+
+test("one official ranked recognition can produce a grounded one-bullet brief", async () => {
+  const ioiEvent: DiscoveryEvent = {
+    ...event,
+    source: "roster-page",
+    sourceExternalId: "ioi-2025-rank-1",
+    sourceUrl: "https://stats.ioinformatics.org/results/2025",
+    type: "community_recognition",
+    title: "Ada Example received gold recognition at IOI 2025",
+    description: "1 | Ada Example | Exampleland | 591.23 | Gold",
+    metrics: { rank: 1 },
+    tags: ["manual-roster-deep-dive", "gold"],
+    confidence: 0.66,
+  };
+  const brief = "- Ada Example received gold recognition at IOI 2025. [Source](https://stats.ioinformatics.org/results/2025)";
+
+  assert.equal(supportsSingleFactBrief([ioiEvent]), true);
+  assert.equal(isGroundedCandidateBrief(brief, [ioiEvent]), true);
+  assert.equal(isGroundedCandidateBrief(
+    "- Ada Example built a compiler. [Source](https://github.com/example/compiler)",
+    [event],
+  ), false);
+
+  const generated = await generateCandidateBrief({
+    person: ioiEvent.person,
+    events: [ioiEvent],
+  });
+  assert.match(generated?.summary ?? "", /^- Ada Example received gold recognition/);
+  assert.equal(generated?.sources[0]?.url, ioiEvent.sourceUrl);
 });
 
 test("brief evidence interleaves publishers before repeating one", () => {

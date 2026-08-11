@@ -31,7 +31,11 @@ import type { IdentityResolutionResult } from "@/lib/data/contracts";
 
 import { parseDiscoveryConfiguration } from "../config";
 import { stableHash } from "../idempotency";
-import type { DiscoveryRepository, EnrichmentTarget } from "../repository";
+import type {
+  BriefReleaseStrategy,
+  DiscoveryRepository,
+  EnrichmentTarget,
+} from "../repository";
 import {
   SOURCE_KINDS,
   type DiscoveryEvent,
@@ -582,8 +586,12 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
     });
   }
 
-  async releaseCandidateBrief(workspaceId: string, candidateId: string) {
-    await releaseCandidateBriefClaim(workspaceId, candidateId);
+  async releaseCandidateBrief(
+    workspaceId: string,
+    candidateId: string,
+    strategy?: BriefReleaseStrategy,
+  ) {
+    await releaseCandidateBriefClaim(workspaceId, candidateId, strategy);
   }
 
   async listGraphExpansionSeeds(workspaceId: string, limit: number) {

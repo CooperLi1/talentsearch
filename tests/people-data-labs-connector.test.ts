@@ -5,6 +5,7 @@ import { getDefaultConnectorSettings, parseDiscoveryConfiguration } from "../lib
 import { createConnectorRegistry } from "../lib/discovery/connectors";
 import {
   licensedFuzzyLookupAnchor,
+  isGroundedRosterLicensedMatch,
   namesRoughlyMatch,
   parseLicensedProfile,
   PeopleDataLabsConnector,
@@ -40,7 +41,7 @@ test("People Data Labs stays registered but disabled without a key", () => {
     }).connectors["people-data-labs"];
     assert.equal(settings?.enabled, false);
     assert.equal(getDefaultConnectorSettings()["people-data-labs"].maxItems, 5);
-    assert.equal(getDefaultConnectorSettings()["people-data-labs"].options?.minLikelihood, 7);
+    assert.equal(getDefaultConnectorSettings()["people-data-labs"].options?.minLikelihood, 6);
   } finally {
     if (previous !== undefined) process.env.PEOPLE_DATA_SEARCH_KEY = previous;
   }
@@ -95,19 +96,17 @@ test("fuzzy lookups require a human name plus an affiliation or location anchor"
 test("fuzzy PDL lookups can be explicitly disabled before spending a credit", async () => {
   const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
   const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
-  const originalFetch = globalThis.fetch;
   let requests = 0;
   process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
   process.env.PDL_ALLOW_FUZZY_LOOKUPS = "false";
-  globalThis.fetch = async () => {
+  const connector = new PeopleDataLabsConnector(async () => {
     requests += 1;
     throw new Error("PDL should not have been called");
-  };
+  });
   try {
-    assert.equal(await new PeopleDataLabsConnector().enrich(enrichmentContext()), null);
+    assert.equal(await connector.enrich(enrichmentContext()), null);
     assert.equal(requests, 0);
   } finally {
-    globalThis.fetch = originalFetch;
     if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
     else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
     if (previousFuzzy === undefined) delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
@@ -118,22 +117,20 @@ test("fuzzy PDL lookups can be explicitly disabled before spending a credit", as
 test("anchored fuzzy PDL recovery honors the configured provider likelihood", async () => {
   const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
   const previousFuzzy = process.env.PDL_ALLOW_FUZZY_LOOKUPS;
-  const originalFetch = globalThis.fetch;
   let requestedUrl = "";
   process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
   delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
-  globalThis.fetch = async (input) => {
+  const connector = new PeopleDataLabsConnector(async (input) => {
     requestedUrl = String(input);
     return new Response(null, { status: 404 });
-  };
+  });
   try {
-    assert.deepEqual(await new PeopleDataLabsConnector().enrich(enrichmentContext()), { events: [] });
+    assert.deepEqual(await connector.enrich(enrichmentContext()), { events: [] });
     const request = new URL(requestedUrl);
     assert.equal(request.searchParams.get("name"), "Reviewed Person");
     assert.equal(request.searchParams.get("school"), "Example University");
     assert.equal(request.searchParams.get("min_likelihood"), "8");
   } finally {
-    globalThis.fetch = originalFetch;
     if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
     else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
     if (previousFuzzy === undefined) delete process.env.PDL_ALLOW_FUZZY_LOOKUPS;
@@ -155,6 +152,66 @@ test("roster countries become location anchors instead of company names", () => 
     location: "California",
     sourceUrl: "https://github.com/reviewed",
   }), { school: "Example University", location: "California" });
+});
+
+test("roster evidence repairs malformed country-link affiliations", () => {
+  const person = {
+    displayName: "Hengxi Liu",
+    identities: [{ provider: "roster-page" as const, externalId: "ioi-2025-1" }],
+    affiliations: ["https://stats.ioinformatics.org/results/countries/"],
+    sourceUrl: "https://stats.ioinformatics.org/results/2025",
+  };
+  assert.deepEqual(licensedFuzzyLookupAnchor(person, [{
+    idempotencyKey: "ioi-1",
+    source: "roster-page",
+    sourceExternalId: "ioi-1",
+    type: "community_recognition",
+    title: "Hengxi Liu received gold recognition at IOI 2025",
+    description: "1 | Hengxi Liu | China | 591.23 | Gold",
+    occurredAt: now.toISOString(),
+    discoveredAt: now.toISOString(),
+    sourceUrl: person.sourceUrl,
+    evidence: [],
+    person,
+    tags: ["manual-roster-deep-dive"],
+    confidence: 0.66,
+  }]), { location: "China" });
+});
+
+test("a high-confidence provider and model roster match can bind after review", () => {
+  const review = {
+    verdict: "match" as const,
+    decision: "review" as const,
+    confidence: 0.88,
+    corroboratingSignals: [
+      { category: "name" as const, candidateEvidence: "Hengxi Liu", observedEvidence: "Hengxi Liu" },
+      { category: "location" as const, candidateEvidence: "China", observedEvidence: "Beijing, China" },
+    ],
+    conflicts: [],
+    summary: "Exact name and compatible country; no conflicts.",
+  };
+  const person = {
+    displayName: "Hengxi Liu",
+    identities: [{ provider: "roster-page" as const, externalId: "ioi-2025-1" }],
+    affiliations: ["China"],
+    sourceUrl: "https://stats.ioinformatics.org/results/2025",
+  };
+
+  assert.equal(isGroundedRosterLicensedMatch({
+    person,
+    requestedName: "Hengxi Liu",
+    returnedName: "Hengxi Liu",
+    likelihood: 7,
+    review,
+  }), true);
+  assert.equal(isGroundedRosterLicensedMatch({
+    person,
+    requestedName: "Hengxi Liu",
+    returnedName: "Hengxi Liu",
+    likelihood: 6,
+    review,
+  }), false);
+  assert.equal(shouldBindLicensedProfileIdentity(false, "review", true), true);
 });
 
 test("a recent licensed event suppresses a second billed lookup", async () => {
