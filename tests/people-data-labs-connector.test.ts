@@ -157,7 +157,7 @@ test("official roster lookups use a looser bounded provider threshold", async ()
     assert.deepEqual(await connector.enrich(context), { events: [] });
     const request = new URL(requestedUrl);
     assert.equal(request.searchParams.get("location"), "China");
-    assert.equal(request.searchParams.get("min_likelihood"), "5");
+    assert.equal(request.searchParams.get("min_likelihood"), "3");
   } finally {
     if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
     else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
@@ -227,14 +227,14 @@ test("a moderate provider and model roster match can bind after review", () => {
     person,
     requestedName: "Hengxi Liu",
     returnedName: "Hengxi Liu",
-    likelihood: 5,
+    likelihood: 3,
     review,
   }), true);
   assert.equal(isGroundedRosterLicensedMatch({
     person,
     requestedName: "Hengxi Liu",
     returnedName: "Hengxi Liu",
-    likelihood: 4,
+    likelihood: 2,
     review,
   }), false);
   assert.equal(shouldBindLicensedProfileIdentity(false, "review", true), true);

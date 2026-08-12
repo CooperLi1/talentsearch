@@ -18,7 +18,10 @@ import { asNumber, asStringArray, clamp, createDiscoveryEvent } from "./shared";
 
 const ENRICH_ENDPOINT = "https://api.peopledatalabs.com/v5/person/enrich";
 const DEFAULT_MIN_LIKELIHOOD = 6;
-const ROSTER_MIN_LIKELIHOOD = 5;
+// PDL documents that name + location lookups rarely score above 4. Official
+// roster candidates still pass through exact-name and model conflict checks,
+// so retrieve moderate matches for the reviewer instead of filtering them out.
+const ROSTER_MIN_LIKELIHOOD = 3;
 const DEFAULT_REFRESH_DAYS = 90;
 
 type PdlNamedEntity = { name?: unknown };
