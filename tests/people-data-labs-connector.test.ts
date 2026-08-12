@@ -138,6 +138,32 @@ test("anchored fuzzy PDL recovery honors the configured provider likelihood", as
   }
 });
 
+test("official roster lookups use a looser bounded provider threshold", async () => {
+  const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
+  let requestedUrl = "";
+  process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
+  const connector = new PeopleDataLabsConnector(async (input) => {
+    requestedUrl = String(input);
+    return new Response(null, { status: 404 });
+  });
+  try {
+    const context = enrichmentContext();
+    context.person = {
+      displayName: "Hengxi Liu",
+      identities: [{ provider: "roster-page", externalId: "ioi-2025-1" }],
+      affiliations: ["China"],
+      sourceUrl: "https://stats.ioinformatics.org/results/2025",
+    };
+    assert.deepEqual(await connector.enrich(context), { events: [] });
+    const request = new URL(requestedUrl);
+    assert.equal(request.searchParams.get("location"), "China");
+    assert.equal(request.searchParams.get("min_likelihood"), "5");
+  } finally {
+    if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
+    else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
+  }
+});
+
 test("roster countries become location anchors instead of company names", () => {
   assert.deepEqual(licensedFuzzyLookupAnchor({
     displayName: "Hengxi Liu",
@@ -178,11 +204,11 @@ test("roster evidence repairs malformed country-link affiliations", () => {
   }]), { location: "China" });
 });
 
-test("a high-confidence provider and model roster match can bind after review", () => {
+test("a moderate provider and model roster match can bind after review", () => {
   const review = {
     verdict: "match" as const,
     decision: "review" as const,
-    confidence: 0.88,
+    confidence: 0.78,
     corroboratingSignals: [
       { category: "name" as const, candidateEvidence: "Hengxi Liu", observedEvidence: "Hengxi Liu" },
       { category: "location" as const, candidateEvidence: "China", observedEvidence: "Beijing, China" },
@@ -201,14 +227,14 @@ test("a high-confidence provider and model roster match can bind after review", 
     person,
     requestedName: "Hengxi Liu",
     returnedName: "Hengxi Liu",
-    likelihood: 7,
+    likelihood: 5,
     review,
   }), true);
   assert.equal(isGroundedRosterLicensedMatch({
     person,
     requestedName: "Hengxi Liu",
     returnedName: "Hengxi Liu",
-    likelihood: 6,
+    likelihood: 4,
     review,
   }), false);
   assert.equal(shouldBindLicensedProfileIdentity(false, "review", true), true);

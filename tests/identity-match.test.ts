@@ -67,6 +67,69 @@ test("name and country alone remain reviewable rather than auto-matching", () =>
   assert.equal(decision.decision, "review");
 });
 
+test("official roster candidates can match on one compatible signal", () => {
+  const decision = applyIdentityMatchPolicy(output({
+    confidence: 0.78,
+    corroboratingSignals: [
+      {
+        category: "name",
+        candidateEvidence: "Hengxi Liu",
+        observedEvidence: "Hengxi Liu",
+      },
+      {
+        category: "location",
+        candidateEvidence: "China",
+        observedEvidence: "Beijing, China",
+      },
+    ],
+  }), { officialRosterCandidate: true });
+  assert.equal(decision.decision, "match");
+});
+
+test("official roster matching still refuses conflicts and name-only matches", () => {
+  const nameOnly = applyIdentityMatchPolicy(output({
+    confidence: 0.95,
+    corroboratingSignals: [{
+      category: "name",
+      candidateEvidence: "Alex Kim",
+      observedEvidence: "Alex Kim",
+    }],
+  }), { officialRosterCandidate: true });
+  assert.equal(nameOnly.decision, "review");
+
+  const broadInterestOnly = applyIdentityMatchPolicy(output({
+    confidence: 0.95,
+    corroboratingSignals: [
+      {
+        category: "name",
+        candidateEvidence: "Alex Kim",
+        observedEvidence: "Alex Kim",
+      },
+      {
+        category: "interests",
+        candidateEvidence: "Interested in programming",
+        observedEvidence: "Interested in software",
+      },
+    ],
+  }), { officialRosterCandidate: true });
+  assert.equal(broadInterestOnly.decision, "review");
+
+  const conflicting = applyIdentityMatchPolicy(output({
+    confidence: 0.95,
+    corroboratingSignals: [{
+      category: "education",
+      candidateEvidence: "School A",
+      observedEvidence: "School A",
+    }],
+    conflicts: [{
+      category: "timeline",
+      candidateEvidence: "Competed as a student in 2025",
+      observedEvidence: "Retired in 2010",
+    }],
+  }), { officialRosterCandidate: true });
+  assert.equal(conflicting.decision, "review");
+});
+
 test("a concrete conflict prevents automatic matching", () => {
   const decision = applyIdentityMatchPolicy(output({
     confidence: 0.97,

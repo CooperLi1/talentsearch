@@ -560,7 +560,7 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
                 retrievedAt: context.now.toISOString(),
                 identityReview: modelReview,
                 identityModel: identityMatchModelName(),
-                identityPromptVersion: "identity-evidence-v1",
+                identityPromptVersion: "identity-evidence-v2",
                 contentHash: stableHash(title, description, pageText.slice(0, 10_000)),
                 snippetStored: false,
               },
@@ -657,7 +657,7 @@ export class BraveEnrichmentConnector implements DiscoveryConnector {
                 identityModel: modelReview
                   ? identityMatchModelName()
                   : undefined,
-                identityPromptVersion: modelReview ? "identity-evidence-v1" : undefined,
+                identityPromptVersion: modelReview ? "identity-evidence-v2" : undefined,
                 contentHash: stableHash(title, description, pageText.slice(0, 10_000)),
                 snippetStored: false,
               },

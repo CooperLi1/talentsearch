@@ -18,6 +18,7 @@ import { asNumber, asStringArray, clamp, createDiscoveryEvent } from "./shared";
 
 const ENRICH_ENDPOINT = "https://api.peopledatalabs.com/v5/person/enrich";
 const DEFAULT_MIN_LIKELIHOOD = 6;
+const ROSTER_MIN_LIKELIHOOD = 5;
 const DEFAULT_REFRESH_DAYS = 90;
 
 type PdlNamedEntity = { name?: unknown };
@@ -205,10 +206,10 @@ export function isGroundedRosterLicensedMatch(input: {
     return false;
   }
   if (
-    input.likelihood < 7 ||
+    input.likelihood < ROSTER_MIN_LIKELIHOOD ||
     normalizedHumanName(input.requestedName) !== normalizedHumanName(input.returnedName) ||
     input.review?.verdict !== "match" ||
-    input.review.confidence < 0.85 ||
+    input.review.confidence < 0.75 ||
     input.review.conflicts.length > 0
   ) return false;
   return input.review.corroboratingSignals.some(
@@ -269,12 +270,18 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
       10,
       Math.max(1, Math.floor(asNumber(context.settings.options?.minLikelihood, DEFAULT_MIN_LIKELIHOOD))),
     );
+    const rosterCandidate = context.person.identities.some(
+      (identity) => identity.provider === "roster-page",
+    );
+    const effectiveMinLikelihood = !linkedInUrl && rosterCandidate
+      ? Math.min(minLikelihood, ROSTER_MIN_LIKELIHOOD)
+      : minLikelihood;
 
     const endpoint = new URL(ENRICH_ENDPOINT);
     // Every fuzzy result still passes through the grounded identity reviewer.
     // Honor the configured provider threshold so a strong work, education, or
     // project overlap can recover people that PDL scores below 9.
-    endpoint.searchParams.set("min_likelihood", String(minLikelihood));
+    endpoint.searchParams.set("min_likelihood", String(effectiveMinLikelihood));
     if (linkedInUrl) {
       endpoint.searchParams.set("profile", linkedInUrl);
     } else {
@@ -473,7 +480,7 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
             identityModel: modelReview
               ? identityMatchModelName()
               : undefined,
-            identityPromptVersion: modelReview ? "identity-evidence-v1" : undefined,
+            identityPromptVersion: modelReview ? "identity-evidence-v2" : undefined,
             retrievedAt: context.now.toISOString(),
             contactFieldsStored: false,
           },

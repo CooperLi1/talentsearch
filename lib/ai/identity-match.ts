@@ -67,18 +67,26 @@ function cleanSignal(signal: IdentityMatchOutput["corroboratingSignals"][number]
  * The model may propose a match, but the server owns the acceptance threshold.
  * A name is only a prerequisite; it is never counted as corroboration.
  */
-export function applyIdentityMatchPolicy(output: IdentityMatchOutput): IdentityMatchDecision {
+export function applyIdentityMatchPolicy(
+  output: IdentityMatchOutput,
+  options: { officialRosterCandidate?: boolean } = {},
+): IdentityMatchDecision {
   const corroboratingSignals = output.corroboratingSignals.map(cleanSignal);
   const conflicts = output.conflicts.map(cleanSignal);
   const independentSignals = corroboratingSignals.filter((signal) => signal.category !== "name");
+  const rosterSignals = independentSignals.filter((signal) => signal.category !== "interests");
   const strongSignalCount = independentSignals.filter((signal) =>
     strongCategories.has(signal.category),
   ).length;
   const enoughSupport =
     (independentSignals.length >= 2 && strongSignalCount >= 1) ||
-    (independentSignals.length >= 1 && strongSignalCount >= 1 && output.confidence >= 0.85);
+    (independentSignals.length >= 1 && strongSignalCount >= 1 && output.confidence >= 0.85) ||
+    (options.officialRosterCandidate === true &&
+      rosterSignals.length >= 1 &&
+      output.confidence >= 0.75);
+  const minimumConfidence = options.officialRosterCandidate === true ? 0.75 : 0.8;
   const decision = output.verdict === "match"
-    ? output.confidence >= 0.8 && conflicts.length === 0 && enoughSupport
+    ? output.confidence >= minimumConfidence && conflicts.length === 0 && enoughSupport
       ? "match"
       : "review"
     : output.verdict;
@@ -139,6 +147,9 @@ export async function reviewIdentityEvidenceMatch(input: {
   if (!model || input.signal?.aborted) return null;
 
   try {
+    const officialRosterCandidate = input.evidenceEvents.some(
+      (event) => event.tags?.includes("manual-roster-deep-dive"),
+    );
     const { output } = await generateText({
       model,
       output: Output.object({
@@ -155,13 +166,15 @@ Grounding rules:
 - Age, birth year, graduation year, or career stage may be used only when explicitly stated in the evidence. Never infer age. Never use age alone.
 - Strong exact overlap in a distinctive project, verified account, school, employer, or achievement can be highly probative.
 - Broad interests or a country-level location are weak signals and need stronger corroboration.
+- For a candidate from an operator-requested official roster, an exact name plus one compatible concrete signal may be enough when the name is reasonably distinctive and there are no contradictions. Treat a country match as supporting but not decisive for a common name.
 - Missing information is not a conflict. Record only concrete contradictions.
 - Different verified accounts, incompatible simultaneous schools or jobs, or incompatible explicit timelines are conflicts.
-- Return match only with at least two independent compatible signals, including one strong signal, or one exceptionally distinctive strong signal.
+- Outside official-roster mode, return match only with at least two independent compatible signals including one strong signal, or one exceptionally distinctive strong signal.
 - Return review when the evidence is plausible but insufficient or partially inconsistent.
 - Return reject when the evidence clearly describes a different person.
 - Quote or tightly paraphrase the supplied evidence in each signal. Do not invent facts.`,
       prompt: JSON.stringify({
+        matchingMode: officialRosterCandidate ? "operator-requested-official-roster" : "standard",
         candidate: candidateEvidence(input.person, input.evidenceEvents),
         observed: {
           url: input.observed.url,
@@ -178,7 +191,7 @@ Grounding rules:
       timeout: { totalMs: 15_000 },
       abortSignal: input.signal,
     });
-    return applyIdentityMatchPolicy(output);
+    return applyIdentityMatchPolicy(output, { officialRosterCandidate });
   } catch (error) {
     const failure = modelCallFailure(error);
     if (isModelProviderUnavailable(failure)) {
