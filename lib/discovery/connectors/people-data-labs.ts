@@ -21,7 +21,7 @@ const DEFAULT_MIN_LIKELIHOOD = 6;
 // PDL documents that name + location lookups rarely score above 4. Official
 // roster candidates still pass through exact-name and model conflict checks,
 // so retrieve moderate matches for the reviewer instead of filtering them out.
-const ROSTER_MIN_LIKELIHOOD = 3;
+const ROSTER_MIN_LIKELIHOOD = 2;
 const DEFAULT_REFRESH_DAYS = 90;
 
 type PdlNamedEntity = { name?: unknown };

@@ -24,7 +24,7 @@ services:
       - key: PEOPLE_DATA_SEARCH_KEY
         sync: false
       - key: PDL_DAILY_REQUEST_LIMIT
-        value: "13"
+        value: "14"
       - key: PDL_ALLOW_FUZZY_LOOKUPS
         value: "true"
       - key: GITHUB_TOKEN
