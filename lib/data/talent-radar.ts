@@ -578,8 +578,17 @@ async function hydrate(
   const ids = rows.map((row) => row.id);
   const emptyResult = Promise.resolve({ data: [], error: null });
   const [eventsResult, identitiesResult, graphNodesResult, graphEdgesResult] = await Promise.all([
-    client.from("events").select("*").in("candidate_id", ids).order("discovered_at", { ascending: false }),
-    client.from("identities").select("*").in("candidate_id", ids),
+    client
+      .from("events")
+      .select("*")
+      .eq("workspace_id", rows[0].workspace_id)
+      .in("candidate_id", ids)
+      .order("discovered_at", { ascending: false }),
+    client
+      .from("identities")
+      .select("*")
+      .eq("workspace_id", rows[0].workspace_id)
+      .in("candidate_id", ids),
     options.includeGraph === false
       ? emptyResult
       : client
