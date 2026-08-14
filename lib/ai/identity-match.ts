@@ -74,7 +74,9 @@ export function applyIdentityMatchPolicy(
   const corroboratingSignals = output.corroboratingSignals.map(cleanSignal);
   const conflicts = output.conflicts.map(cleanSignal);
   const independentSignals = corroboratingSignals.filter((signal) => signal.category !== "name");
-  const rosterSignals = independentSignals.filter((signal) => signal.category !== "interests");
+  const rosterSignals = independentSignals.filter((signal) =>
+    strongCategories.has(signal.category) || signal.category === "timeline"
+  );
   const strongSignalCount = independentSignals.filter((signal) =>
     strongCategories.has(signal.category),
   ).length;
@@ -166,7 +168,8 @@ Grounding rules:
 - Age, birth year, graduation year, or career stage may be used only when explicitly stated in the evidence. Never infer age. Never use age alone.
 - Strong exact overlap in a distinctive project, verified account, school, employer, or achievement can be highly probative.
 - Broad interests or a country-level location are weak signals and need stronger corroboration.
-- For a candidate from an operator-requested official roster, an exact name plus one compatible concrete signal may be enough when the name is reasonably distinctive and there are no contradictions. Treat a country match as supporting but not decisive for a common name.
+- For a candidate from an operator-requested official roster, an exact name plus one compatible education, work, project, achievement, identity, or timeline signal may be enough when there are no contradictions. Country-level location alone is never enough.
+- When the candidate evidence is a school-level olympiad or similar student competition, compare the contest date with explicit education and employment dates. A long professional or university history predating the contest is a timeline conflict unless the evidence explicitly explains it.
 - Missing information is not a conflict. Record only concrete contradictions.
 - Different verified accounts, incompatible simultaneous schools or jobs, or incompatible explicit timelines are conflicts.
 - Outside official-roster mode, return match only with at least two independent compatible signals including one strong signal, or one exceptionally distinctive strong signal.

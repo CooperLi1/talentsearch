@@ -204,10 +204,10 @@ test("roster evidence repairs malformed country-link affiliations", () => {
   }]), { location: "China" });
 });
 
-test("a moderate provider and model roster match can bind after review", () => {
+test("a roster profile cannot bind from name and country alone", () => {
   const review = {
     verdict: "match" as const,
-    decision: "review" as const,
+    decision: "match" as const,
     confidence: 0.78,
     corroboratingSignals: [
       { category: "name" as const, candidateEvidence: "Hengxi Liu", observedEvidence: "Hengxi Liu" },
@@ -229,15 +229,29 @@ test("a moderate provider and model roster match can bind after review", () => {
     returnedName: "Hengxi Liu",
     likelihood: 2,
     review,
+  }), false);
+  const groundedReview = {
+    ...review,
+    corroboratingSignals: [
+      ...review.corroboratingSignals,
+      { category: "education" as const, candidateEvidence: "Example School", observedEvidence: "Example School" },
+    ],
+  };
+  assert.equal(isGroundedRosterLicensedMatch({
+    person,
+    requestedName: "Hengxi Liu",
+    returnedName: "Hengxi Liu",
+    likelihood: 2,
+    review: groundedReview,
   }), true);
   assert.equal(isGroundedRosterLicensedMatch({
     person,
     requestedName: "Hengxi Liu",
     returnedName: "Hengxi Liu",
     likelihood: 1,
-    review,
+    review: groundedReview,
   }), false);
-  assert.equal(shouldBindLicensedProfileIdentity(false, "review", true), true);
+  assert.equal(shouldBindLicensedProfileIdentity(false, "match", true), true);
 });
 
 test("a recent licensed event suppresses a second billed lookup", async () => {

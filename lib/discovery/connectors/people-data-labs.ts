@@ -211,12 +211,12 @@ export function isGroundedRosterLicensedMatch(input: {
   if (
     input.likelihood < ROSTER_MIN_LIKELIHOOD ||
     normalizedHumanName(input.requestedName) !== normalizedHumanName(input.returnedName) ||
-    input.review?.verdict !== "match" ||
+    input.review?.decision !== "match" ||
     input.review.confidence < 0.75 ||
     input.review.conflicts.length > 0
   ) return false;
   return input.review.corroboratingSignals.some(
-    (signal) => !["name", "interests"].includes(signal.category),
+    (signal) => !["name", "interests", "location"].includes(signal.category),
   );
 }
 

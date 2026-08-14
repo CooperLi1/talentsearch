@@ -2,8 +2,8 @@ import { Dashboard, type DashboardCandidateView } from "@/components/dashboard/d
 import {
   buildOperatorBrief,
   hasGroundedOperatorBrief,
-  hasIndependentEvidenceCoverage,
-  hasIndependentOperatorBriefCoverage,
+  hasReviewableEvidenceCoverage,
+  hasReviewableOperatorBriefCoverage,
   operatorQueueRank,
 } from "@/lib/candidates/operator-brief";
 import { getDashboardData } from "@/lib/data/talent-radar";
@@ -19,7 +19,10 @@ function toDashboardCandidate(candidate: Candidate): DashboardCandidateView {
     id: candidate.id,
     name: candidate.name,
     referralDisabled:
-      Boolean(unresolvedIdentity) || candidate.confidence < 0.72 || /high.?school|minor/i.test(candidate.stage),
+      Boolean(unresolvedIdentity) ||
+      candidate.confidence < 0.72 ||
+      candidate.sourceCount < 2 ||
+      /high.?school|minor/i.test(candidate.stage),
     slug: candidate.slug,
     status: candidate.status,
   };
@@ -32,8 +35,8 @@ export default async function HomePage() {
       ["new", "watching", "saved"].includes(candidate.status) &&
       candidate.score >= data.criterion.minimumScore &&
       hasGroundedOperatorBrief(candidate) &&
-      hasIndependentEvidenceCoverage(candidate) &&
-      hasIndependentOperatorBriefCoverage(candidate),
+      hasReviewableEvidenceCoverage(candidate) &&
+      hasReviewableOperatorBriefCoverage(candidate),
     )
     .sort((left, right) =>
       operatorQueueRank(right) - operatorQueueRank(left) ||

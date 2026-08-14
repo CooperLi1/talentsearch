@@ -1,4 +1,4 @@
-export const CURRENT_CANDIDATE_BRIEF_POLICY = "operator-v39";
+export const CURRENT_CANDIDATE_BRIEF_POLICY = "operator-v40";
 
 /** Operator-configurable brief length: background, achievements, wild card. */
 export function configuredBriefFactCount() {

@@ -67,7 +67,7 @@ test("name and country alone remain reviewable rather than auto-matching", () =>
   assert.equal(decision.decision, "review");
 });
 
-test("official roster candidates can match on one compatible signal", () => {
+test("official roster candidates need more than a country match", () => {
   const decision = applyIdentityMatchPolicy(output({
     confidence: 0.78,
     corroboratingSignals: [
@@ -83,7 +83,24 @@ test("official roster candidates can match on one compatible signal", () => {
       },
     ],
   }), { officialRosterCandidate: true });
-  assert.equal(decision.decision, "match");
+  assert.equal(decision.decision, "review");
+
+  const educationMatch = applyIdentityMatchPolicy(output({
+    confidence: 0.78,
+    corroboratingSignals: [
+      {
+        category: "name",
+        candidateEvidence: "Hengxi Liu",
+        observedEvidence: "Hengxi Liu",
+      },
+      {
+        category: "education",
+        candidateEvidence: "Example School",
+        observedEvidence: "Example School student profile",
+      },
+    ],
+  }), { officialRosterCandidate: true });
+  assert.equal(educationMatch.decision, "match");
 });
 
 test("official roster matching still refuses conflicts and name-only matches", () => {

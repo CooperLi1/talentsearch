@@ -122,3 +122,22 @@ test("low-confidence locator matches do not count as evidence publishers", () =>
 
   assert.equal(evidencePublisherCount(events), 1);
 });
+
+test("operator-requested official medals retain a durable review score", () => {
+  const result = scoreCandidate({
+    events: [event(1, {
+      source: "roster-page",
+      sourceUrl: "https://stats.ioinformatics.org/results/2025",
+      type: "competition_result",
+      title: "Ada Example received gold recognition at IOI 2025",
+      description: "1 | Ada Example | Exampleland | 591.23 | Gold",
+      occurredAt: "2025-01-01T00:00:00.000Z",
+      metrics: { rank: 1 },
+      tags: ["manual-roster-deep-dive", "gold"],
+      confidence: 0.66,
+    })],
+    now: new Date("2026-08-14T00:00:00.000Z"),
+  });
+
+  assert.ok(result.total >= 36);
+});

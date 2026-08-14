@@ -50,23 +50,27 @@ test("candidate brief completion requires two source-linked grounded bullets", (
   assert.equal(isGroundedCandidateBrief(brief.split("\n").slice(0, 1).join("\n"), [event]), false);
 });
 
-test("one official ranked recognition can produce a grounded one-bullet brief", async () => {
+test("one official ranked recognition produces two grounded decision facts", async () => {
   const ioiEvent: DiscoveryEvent = {
     ...event,
     source: "roster-page",
     sourceExternalId: "ioi-2025-rank-1",
     sourceUrl: "https://stats.ioinformatics.org/results/2025",
-    type: "community_recognition",
+    type: "competition_result",
     title: "Ada Example received gold recognition at IOI 2025",
     description: "1 | Ada Example | Exampleland | 591.23 | Gold",
     metrics: { rank: 1 },
     tags: ["manual-roster-deep-dive", "gold"],
     confidence: 0.66,
+    person: {
+      ...event.person,
+      affiliations: ["Exampleland"],
+    },
   };
   const brief = "- Ada Example received gold recognition at IOI 2025. [Source](https://stats.ioinformatics.org/results/2025)";
 
-  assert.equal(supportsSingleFactBrief([ioiEvent]), true);
-  assert.equal(isGroundedCandidateBrief(brief, [ioiEvent]), true);
+  assert.equal(supportsSingleFactBrief([ioiEvent]), false);
+  assert.equal(isGroundedCandidateBrief(brief, [ioiEvent]), false);
   assert.equal(isGroundedCandidateBrief(
     "- Ada Example built a compiler. [Source](https://github.com/example/compiler)",
     [event],
@@ -76,7 +80,9 @@ test("one official ranked recognition can produce a grounded one-bullet brief", 
     person: ioiEvent.person,
     events: [ioiEvent],
   });
-  assert.match(generated?.summary ?? "", /^- Ada Example received gold recognition/);
+  assert.match(generated?.summary ?? "", /^- Ada Example represented Exampleland at IOI 2025/);
+  assert.match(generated?.summary ?? "", /placed 1st overall and earned gold recognition/i);
+  assert.equal(generated?.summary.split("\n").length, 2);
   assert.equal(generated?.sources[0]?.url, ioiEvent.sourceUrl);
 });
 

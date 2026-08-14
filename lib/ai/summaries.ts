@@ -288,6 +288,7 @@ export function supportsSingleFactBrief(events: DiscoveryEvent[]) {
   const substantive = events.filter(isSubstantiveBriefEvent);
   if (substantive.length !== 1) return false;
   const [event] = substantive;
+  if (officialRosterBriefFacts(event).length >= 2) return false;
   const recognition = `${event.title} ${event.description ?? ""} ${(event.tags ?? []).join(" ")}`;
   return event.confidence >= 0.65 &&
     [
@@ -300,6 +301,48 @@ export function supportsSingleFactBrief(events: DiscoveryEvent[]) {
       /\b(?:gold|silver|bronze|medal(?:ist)?|winner|finalist|champion|fellowship|grant)\b/i.test(
         recognition,
       ));
+}
+
+function ordinal(value: number) {
+  const whole = Math.max(1, Math.floor(value));
+  const remainder = whole % 100;
+  if (remainder >= 11 && remainder <= 13) return `${whole}th`;
+  return `${whole}${whole % 10 === 1 ? "st" : whole % 10 === 2 ? "nd" : whole % 10 === 3 ? "rd" : "th"}`;
+}
+
+export function officialRosterBriefFacts(event: DiscoveryEvent) {
+  if (!event.tags?.includes("manual-roster-deep-dive") || event.confidence < 0.65) return [];
+  const rank = Number(event.metrics?.rank ?? 0);
+  const recognition = event.tags.find((tag) => /^(?:gold|silver|bronze)$/i.test(tag));
+  const name = sanitizePlainText(event.person.displayName, 100);
+  const eventName = sanitizePlainText(
+    event.title.match(/\bat\s+(.+)$/i)?.[1]?.replace(/:\s*results\s*$/i, "") ?? "the official competition",
+    100,
+  );
+  const affiliation = (event.person.affiliations ?? [])
+    .map((value) => sanitizePlainText(value, 100))
+    .find((value) => value && !/^https?:/i.test(value));
+  if (!(rank > 0) && !recognition && !affiliation) return [];
+  const background = affiliation
+    ? `${name} represented ${affiliation} at ${eventName}.`
+    : `${name} competed at ${eventName}.`;
+  const achievement = rank > 0 && recognition
+    ? `${name} placed ${ordinal(rank)} overall and earned ${recognition.toLocaleLowerCase("en-US")} recognition.`
+    : rank > 0
+      ? `${name} placed ${ordinal(rank)} overall in the official results.`
+      : recognition
+        ? `${name} earned ${recognition.toLocaleLowerCase("en-US")} recognition.`
+        : `${name} appears in the official ${eventName} results.`;
+  return [
+    { text: background, sourceIds: ["E1"] },
+    { text: achievement, sourceIds: ["E1"] },
+  ];
+}
+
+export function usesDeterministicCandidateBrief(events: DiscoveryEvent[]) {
+  const substantive = events.filter(isSubstantiveBriefEvent);
+  return supportsSingleFactBrief(events) ||
+    (substantive.length === 1 && officialRosterBriefFacts(substantive[0]!).length >= 2);
 }
 
 function renderOperatorFacts(
@@ -503,6 +546,17 @@ export async function generateCandidateBrief(
       ...eventEvidence(event),
     }));
     if (!briefEvidence.length) return reject("no-substantive-evidence");
+    if (selectedBriefEvents.length === 1) {
+      const rosterFacts = officialRosterBriefFacts(selectedBriefEvents[0]!);
+      if (rosterFacts.length >= 2) {
+        const summary = renderOperatorFacts(rosterFacts, briefEvidence, 2);
+        if (!summary) return reject("official-roster-render-contract");
+        return {
+          ...fallbackCandidateSummary(person, events, score),
+          summary,
+        };
+      }
+    }
     if (supportsSingleFactBrief(selectedBriefEvents)) {
       const summary = renderOperatorFacts(
         [{

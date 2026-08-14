@@ -10,7 +10,7 @@ import {
   fallbackEventSummary,
   generateCandidateBrief,
   summarizeEvent,
-  supportsSingleFactBrief,
+  usesDeterministicCandidateBrief,
 } from "@/lib/ai/summaries";
 import { CURRENT_CANDIDATE_BRIEF_POLICY } from "@/lib/candidates/brief-policy";
 
@@ -252,7 +252,7 @@ export async function runCandidateBriefBatch(input: {
         events,
         score,
         summary,
-        briefModel: supportsSingleFactBrief(events)
+        briefModel: usesDeterministicCandidateBrief(events)
           ? "deterministic-official-evidence"
           : null,
         embeddingText: buildCandidateEmbeddingText({

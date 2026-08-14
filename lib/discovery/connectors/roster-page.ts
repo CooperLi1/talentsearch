@@ -451,7 +451,10 @@ export class RosterPageConnector implements DiscoveryConnector {
                 rosterPerson.profileUrl ?? rosterPerson.name,
                 rosterPerson.rank,
               ),
-              type: "community_recognition",
+              type:
+                rosterPerson.rank || rosterPerson.recognition
+                  ? "competition_result"
+                  : "community_recognition",
               title: recognitionTitle(rosterPerson, eventName),
               description: rosterPerson.rowText,
               occurredAt,

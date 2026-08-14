@@ -22,6 +22,35 @@ function maxMetric(events: DiscoveryEvent[], key: string) {
   return Math.max(0, ...events.map((event) => event.metrics?.[key] ?? 0));
 }
 
+function operatorRequestedAchievementFloor(events: DiscoveryEvent[]) {
+  return events.reduce((floor, event) => {
+    if (
+      event.confidence < 0.65 ||
+      !event.tags?.includes("manual-roster-deep-dive") ||
+      !["competition_result", "community_recognition"].includes(event.type)
+    ) return floor;
+    const recognition = `${event.title} ${event.description ?? ""} ${event.tags.join(" ")}`;
+    const rank = Number(event.metrics?.rank ?? 0);
+    const rankBonus = rank > 0 ? Math.max(0, 4 - Math.log2(rank + 1)) : 0;
+    const base = /\bgold\b/i.test(recognition)
+      ? 36
+      : /\bsilver\b/i.test(recognition)
+        ? 31
+        : /\bbronze\b/i.test(recognition)
+          ? 25
+          : rank > 0 && rank <= 10
+            ? 32
+            : rank > 0 && rank <= 50
+              ? 26
+              : rank > 0 && rank <= 100
+                ? 22
+                : rank > 0
+                  ? 18
+                  : 0;
+    return Math.max(floor, base + rankBonus);
+  }, 0);
+}
+
 export function scoreCandidate(input: {
   events: DiscoveryEvent[];
   edges?: GraphEdge[];
@@ -212,7 +241,12 @@ export function scoreCandidate(input: {
   const latest = Math.max(...events.map((event) => new Date(event.occurredAt).getTime()));
   const ageDays = Math.max(0, (now.getTime() - latest) / 86_400_000);
   const stalenessPenalty = clamp(Math.max(0, ageDays - 30) / 365, 0, 0.25);
-  const total = Math.round(clamp(weighted - confidencePenalty - stalenessPenalty) * 1000) / 10;
+  const generalScore = Math.round(clamp(weighted - confidencePenalty - stalenessPenalty) * 1000) / 10;
+  // Selective achievements do not stop being meaningful after the general
+  // activity-recency window. An operator-requested official roster is narrow,
+  // inspectable evidence, so keep a calibrated floor without changing the
+  // treatment of ordinary stale or low-confidence events.
+  const total = Math.round(Math.max(generalScore, operatorRequestedAchievementFloor(events)) * 10) / 10;
 
   const explanations: string[] = [];
   if (achievementQuality >= 0.5) explanations.push("Selective achievement or research evidence");

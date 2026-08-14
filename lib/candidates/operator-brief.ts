@@ -137,6 +137,20 @@ export function hasIndependentEvidenceCoverage(candidate: Candidate, minimum = 2
   return candidateEvidencePublishers(candidate).length >= Math.max(1, Math.floor(minimum));
 }
 
+export function hasAuthoritativeDeepDiveEvidence(candidate: Candidate) {
+  return candidate.events.some((event) => {
+    const recognition = `${event.title} ${event.summaryMarkdown} ${(event.tags ?? []).join(" ")}`;
+    return event.confidence >= 0.65 &&
+      event.tags?.includes("manual-roster-deep-dive") &&
+      ["competition_result", "community_recognition"].includes(event.type) &&
+      (Number.isFinite(event.metrics?.rank) || /\b(?:gold|silver|bronze|winner|finalist)\b/i.test(recognition));
+  });
+}
+
+export function hasReviewableEvidenceCoverage(candidate: Candidate) {
+  return hasIndependentEvidenceCoverage(candidate) || hasAuthoritativeDeepDiveEvidence(candidate);
+}
+
 /** The publisher behind most of a candidate's substantive evidence. */
 export function dominantEvidencePublisher(candidate: Candidate) {
   const counts = new Map<string, number>();
@@ -226,6 +240,13 @@ export function operatorBriefPublishers(candidate: Candidate) {
 
 export function hasIndependentOperatorBriefCoverage(candidate: Candidate, minimum = 2) {
   return operatorBriefPublishers(candidate).length >= Math.max(1, Math.floor(minimum));
+}
+
+export function hasReviewableOperatorBriefCoverage(candidate: Candidate) {
+  return hasIndependentOperatorBriefCoverage(candidate) ||
+    (hasAuthoritativeDeepDiveEvidence(candidate) &&
+      groundedSummaryFacts(candidate).length >= 2 &&
+      operatorBriefPublishers(candidate).length >= 1);
 }
 
 export function hasGroundedOperatorBrief(candidate: Candidate) {

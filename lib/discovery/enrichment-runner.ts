@@ -61,7 +61,10 @@ export async function runEnrichmentShard(input: {
     boundedEventLimit: 1,
     graphExpansion: false,
     aiEventSummaryLimit: 0,
-    intelligenceRefreshLimit: 0,
+    // Recompute the score and publisher count for the candidate this shard
+    // just claimed. A zero limit records provider attempts without ever
+    // applying the evidence already stored for that candidate.
+    intelligenceRefreshLimit: candidateLimit,
     maxEnrichmentConnectorsPerPerson: connectorLimit,
     signal: input.signal,
   });

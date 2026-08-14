@@ -9,8 +9,11 @@ import {
   buildOperatorBrief,
   candidateEvidencePublishers,
   hasGroundedOperatorBrief,
+  hasAuthoritativeDeepDiveEvidence,
   hasIndependentEvidenceCoverage,
   hasIndependentOperatorBriefCoverage,
+  hasReviewableEvidenceCoverage,
+  hasReviewableOperatorBriefCoverage,
   operatorBriefPublishers,
   operatorQueueRank,
 } from "../lib/candidates/operator-brief";
@@ -184,6 +187,33 @@ test("one fact shows only one citation chip per publisher", () => {
 
   assert.equal(buildOperatorBrief(result)[0]?.sources.length, 1);
   assert.equal(hasIndependentOperatorBriefCoverage(result), true);
+});
+
+test("an authoritative deep dive is reviewable but remains uncorroborated", () => {
+  const official = event({
+    id: "ioi",
+    type: "competition_result",
+    title: "Ada Example received gold recognition at IOI 2025",
+    sourceLabel: "roster-page",
+    sourceUrl: "https://stats.ioinformatics.org/results/2025",
+    confidence: 0.66,
+    metrics: { rank: 1 },
+    tags: ["manual-roster-deep-dive", "gold"],
+  });
+  const result = candidate({
+    sourceCount: 1,
+    events: [official],
+    summaryMarkdown: [
+      "- Ada Example represented Exampleland at IOI 2025. [Source](https://stats.ioinformatics.org/results/2025)",
+      "- Ada Example placed 1st overall and earned gold recognition. [Source](https://stats.ioinformatics.org/results/2025)",
+    ].join("\n"),
+  });
+
+  assert.equal(hasAuthoritativeDeepDiveEvidence(result), true);
+  assert.equal(hasIndependentEvidenceCoverage(result), false);
+  assert.equal(hasReviewableEvidenceCoverage(result), true);
+  assert.equal(hasIndependentOperatorBriefCoverage(result), false);
+  assert.equal(hasReviewableOperatorBriefCoverage(result), true);
 });
 
 test("queue ranking rewards a recent substantive event, not a recent profile observation", () => {
