@@ -148,7 +148,7 @@ export function hasAuthoritativeDeepDiveEvidence(candidate: Candidate) {
 }
 
 export function hasReviewableEvidenceCoverage(candidate: Candidate) {
-  return hasIndependentEvidenceCoverage(candidate) || hasAuthoritativeDeepDiveEvidence(candidate);
+  return hasIndependentEvidenceCoverage(candidate);
 }
 
 /** The publisher behind most of a candidate's substantive evidence. */
@@ -243,10 +243,7 @@ export function hasIndependentOperatorBriefCoverage(candidate: Candidate, minimu
 }
 
 export function hasReviewableOperatorBriefCoverage(candidate: Candidate) {
-  return hasIndependentOperatorBriefCoverage(candidate) ||
-    (hasAuthoritativeDeepDiveEvidence(candidate) &&
-      groundedSummaryFacts(candidate).length >= 2 &&
-      operatorBriefPublishers(candidate).length >= 1);
+  return hasIndependentOperatorBriefCoverage(candidate);
 }
 
 export function hasGroundedOperatorBrief(candidate: Candidate) {

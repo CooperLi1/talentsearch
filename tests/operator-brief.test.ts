@@ -189,7 +189,7 @@ test("one fact shows only one citation chip per publisher", () => {
   assert.equal(hasIndependentOperatorBriefCoverage(result), true);
 });
 
-test("an authoritative deep dive is reviewable but remains uncorroborated", () => {
+test("an authoritative deep dive remains hidden until independently corroborated", () => {
   const official = event({
     id: "ioi",
     type: "competition_result",
@@ -211,9 +211,9 @@ test("an authoritative deep dive is reviewable but remains uncorroborated", () =
 
   assert.equal(hasAuthoritativeDeepDiveEvidence(result), true);
   assert.equal(hasIndependentEvidenceCoverage(result), false);
-  assert.equal(hasReviewableEvidenceCoverage(result), true);
+  assert.equal(hasReviewableEvidenceCoverage(result), false);
   assert.equal(hasIndependentOperatorBriefCoverage(result), false);
-  assert.equal(hasReviewableOperatorBriefCoverage(result), true);
+  assert.equal(hasReviewableOperatorBriefCoverage(result), false);
 });
 
 test("queue ranking rewards a recent substantive event, not a recent profile observation", () => {
