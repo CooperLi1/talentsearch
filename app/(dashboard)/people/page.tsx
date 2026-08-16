@@ -15,7 +15,7 @@ export default async function PeoplePage() {
   let readiness = getDataReadiness();
   let candidates: Candidate[] = [];
   try {
-    candidates = await listCandidates({ limit: 250 });
+    candidates = await listCandidates({ includeGraph: false, limit: 100 });
   } catch (error) {
     if (!(error instanceof DataNotConfiguredError)) throw error;
     readiness = { ...readiness, dataMode: "unconfigured" };

@@ -644,7 +644,7 @@ export async function listCandidates(options: CandidateListOptions = {}, workspa
   }
   const { data, error } = await query;
   fail(error);
-  return hydrate((data ?? []) as CandidateRow[]);
+  return hydrate((data ?? []) as CandidateRow[], { includeGraph: options.includeGraph });
 }
 
 export async function getCandidateBySlug(slug: string, workspace?: string | number) {

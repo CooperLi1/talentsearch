@@ -9,10 +9,10 @@ export default function DashboardError({ reset }: { error: Error; reset: () => v
     <main className="app-main operator-page">
       <SiteNav />
       <div className="content-frame operator-shell">
-        <section className="compact-empty-state" aria-labelledby="workspace-error-heading">
+        <section className="compact-empty-state" aria-labelledby="dashboard-error-heading">
           <CircleOff aria-hidden="true" />
-          <h1 id="workspace-error-heading">Workspace setup is incomplete</h1>
-          <p>Finish the connection setup, then try this screen again.</p>
+          <h1 id="dashboard-error-heading">This screen could not load</h1>
+          <p>Try again. If the problem continues, check the service status and connection settings.</p>
           <div className="operator-header-actions">
             <button className="editorial-button editorial-button-dark" onClick={reset} type="button">
               Try again

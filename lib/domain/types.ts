@@ -353,6 +353,7 @@ export interface CandidateSearchOptions {
 
 export interface CandidateListOptions {
   limit?: number;
+  includeGraph?: boolean;
   cursor?: { score: number; id: string };
   statuses?: CandidateStatus[];
   domains?: string[];
