@@ -128,6 +128,37 @@ test("an accepted licensed profile adds a deterministic cited IOI brief fact", a
   assert.equal(generated?.summary.split("\n").length, 3);
 });
 
+test("licensed non-Latin roles avoid exposing garbled provider transliteration", async () => {
+  const roster: DiscoveryEvent = {
+    ...event,
+    source: "roster-page",
+    sourceUrl: "https://stats.ioinformatics.org/results/2025",
+    type: "competition_result",
+    title: "Yuya Example received silver recognition at IOI 2025",
+    description: "39 | Yuya Example | Japan | 400 | Silver",
+    metrics: { rank: 39 },
+    tags: ["manual-roster-deep-dive", "silver"],
+    confidence: 0.66,
+    person: { ...event.person, displayName: "Yuya Example", affiliations: ["Japan"] },
+  };
+  const licensed: DiscoveryEvent = {
+    ...event,
+    idempotencyKey: "pdl-non-latin",
+    source: "people-data-labs",
+    sourceUrl: "https://www.peopledatalabs.com/",
+    type: "profile_observed",
+    description: "Work history: 幹事 at jasca yi ban she tuan fa ren",
+    tags: ["licensed-data", "model-corroborated-identity"],
+    confidence: 0.82,
+    person: roster.person,
+  };
+
+  const generated = await generateCandidateBrief({ person: roster.person, events: [roster, licensed] });
+
+  assert.match(generated?.summary ?? "", /People Data Labs lists a professional role at JASCA/);
+  assert.doesNotMatch(generated?.summary ?? "", /yi ban she tuan/i);
+});
+
 test("brief evidence interleaves publishers before repeating one", () => {
   const githubEvents = Array.from({ length: 4 }, (_, index) => ({
     ...event,

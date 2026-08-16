@@ -336,13 +336,19 @@ export function officialRosterBriefFacts(event: DiscoveryEvent, sourceId = "E1")
 
 function licensedProfileBriefFact(event: DiscoveryEvent, sourceId: string) {
   if (!isLicensedProfileBriefEvent(event)) return null;
-  const detail = (event.description ?? "")
+  let detail = (event.description ?? "")
     .split(/\n+/)
     .map((line) => line.trim())
     .map((line) => line.match(/^(?:Work history|Education|Listed skills):\s*(.+)$/i)?.[1] ?? "")
     .map((line) => line.split(";")[0]?.trim() ?? "")
     .find(Boolean);
   if (!detail) return null;
+  if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(detail)) {
+    const organization = detail.match(/\bat\s+([a-z][a-z0-9.-]{1,30})\b/i)?.[1];
+    detail = organization
+      ? `a professional role at ${organization.toLocaleUpperCase("en-US")}`
+      : "a professional role";
+  }
   const name = sanitizePlainText(event.person.displayName, 100);
   return {
     text: `People Data Labs lists ${detail} for ${name}.`,
