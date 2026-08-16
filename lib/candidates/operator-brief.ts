@@ -1,4 +1,8 @@
 import type { Candidate, EvidenceLink, TalentEvent } from "@/lib/domain/types";
+import {
+  isAcceptedPeopleDataLabsEvidence,
+  publisherHostname,
+} from "@/lib/discovery/evidence-publishers";
 import { configuredBriefFactCount } from "./brief-policy";
 
 export type OperatorBriefSource = Pick<EvidenceLink, "label" | "url">;
@@ -11,26 +15,9 @@ export type OperatorBriefFact = {
 const INTERNAL_JUDGMENT = /\b(?:why now|stands? out|undiscover(?:ed|y)|under[ -]?recognized|review score|identity confidence|strong signal relative|worth watching)\b/i;
 const EMPTY_VALUE = /^(?:unknown|unverified|not verified|n\/?a|none)$/i;
 const NON_SUBSTANTIVE_EVENT_TYPES = new Set([
-  "profile_observed",
   "social_graph_signal",
   "identity_observed",
 ]);
-const PROVIDER_PUBLISHERS: Record<string, string> = {
-  github: "github.com",
-  gitlab: "gitlab.com",
-  "hacker-news": "news.ycombinator.com",
-  "hacker news": "news.ycombinator.com",
-  arxiv: "arxiv.org",
-  crossref: "crossref.org",
-  openalex: "openalex.org",
-  "semantic-scholar": "semanticscholar.org",
-  "semantic scholar": "semanticscholar.org",
-  "hugging-face": "huggingface.co",
-  "hugging face": "huggingface.co",
-  codeforces: "codeforces.com",
-  x: "x.com",
-};
-
 function plainText(value: string) {
   return value
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
@@ -91,15 +78,12 @@ function safeSources(event: TalentEvent): OperatorBriefSource[] {
 }
 
 function eventPublisher(event: TalentEvent) {
-  if (NON_SUBSTANTIVE_EVENT_TYPES.has(event.type)) return null;
-  const source = event.sourceLabel.trim().toLocaleLowerCase("en-US");
-  const providerPublisher = PROVIDER_PUBLISHERS[source];
-  if (providerPublisher) return providerPublisher;
-  try {
-    return new URL(event.sourceUrl).hostname.toLocaleLowerCase("en-US").replace(/^www\./, "");
-  } catch {
-    return source || null;
-  }
+  if (
+    NON_SUBSTANTIVE_EVENT_TYPES.has(event.type) ||
+    event.confidence < 0.65 ||
+    !isAcceptedPeopleDataLabsEvidence(event)
+  ) return null;
+  return publisherHostname(event.sourceUrl);
 }
 
 function sourcePublisher(source: OperatorBriefSource) {

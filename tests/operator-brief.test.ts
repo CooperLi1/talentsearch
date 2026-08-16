@@ -216,6 +216,47 @@ test("an authoritative deep dive remains hidden until independently corroborated
   assert.equal(hasReviewableOperatorBriefCoverage(result), false);
 });
 
+test("accepted PDL evidence counts and remains visible in the operator brief", () => {
+  const rosterUrl = "https://stats.ioinformatics.org/results/2025";
+  const pdlUrl = "https://www.peopledatalabs.com/";
+  const result = candidate({
+    sourceCount: 2,
+    events: [
+      event({
+        id: "ioi",
+        type: "competition_result",
+        sourceLabel: "roster-page",
+        sourceUrl: rosterUrl,
+        confidence: 0.66,
+        tags: ["manual-roster-deep-dive", "gold"],
+      }),
+      event({
+        id: "pdl",
+        type: "profile_observed",
+        sourceLabel: "people-data-labs",
+        sourceUrl: pdlUrl,
+        confidence: 0.82,
+        tags: ["licensed-data", "model-corroborated-identity"],
+      }),
+    ],
+    summaryMarkdown: [
+      `- People Data Labs lists Example University for Ada Example. [PDL](${pdlUrl})`,
+      `- Ada Example represented Exampleland at IOI 2025. [IOI](${rosterUrl})`,
+    ].join("\n"),
+  });
+
+  assert.deepEqual(candidateEvidencePublishers(result), [
+    "stats.ioinformatics.org",
+    "peopledatalabs.com",
+  ]);
+  assert.equal(hasIndependentEvidenceCoverage(result), true);
+  assert.deepEqual(operatorBriefPublishers(result), [
+    "peopledatalabs.com",
+    "stats.ioinformatics.org",
+  ]);
+  assert.equal(hasIndependentOperatorBriefCoverage(result), true);
+});
+
 test("queue ranking rewards a recent substantive event, not a recent profile observation", () => {
   const now = new Date("2026-07-12T00:00:00.000Z");
   const stale = candidate({

@@ -30,6 +30,7 @@ import {
 import type { IdentityResolutionResult } from "@/lib/data/contracts";
 
 import { parseDiscoveryConfiguration } from "../config";
+import { isAcceptedPeopleDataLabsEvidence } from "../evidence-publishers";
 import { stableHash } from "../idempotency";
 import type {
   BriefReleaseStrategy,
@@ -499,6 +500,20 @@ export class TalentRadarDiscoveryRepository implements DiscoveryRepository {
         kind: "primary",
       })),
     });
+    if (
+      input.event.source === "people-data-labs" &&
+      isAcceptedPeopleDataLabsEvidence(input.event)
+    ) {
+      // The database brief fingerprint intentionally ignores unresolved
+      // profiles. Explicitly requeue only an accepted licensed profile so its
+      // background fact becomes visible without broad queue-policy changes.
+      await updateCandidateIntelligence({
+        workspaceId: input.workspaceId,
+        candidateId: input.candidateId,
+        briefGeneratedAt: null,
+        briefClaimedUntil: null,
+      });
+    }
     return stored;
   }
 

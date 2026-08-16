@@ -8,6 +8,7 @@ import {
 import type { CandidateScore, DiscoveryEvent, PersonObservation } from "@/lib/discovery/types";
 import { configuredBriefFactCount } from "@/lib/candidates/brief-policy";
 import { sanitizePlainText } from "@/lib/discovery/security";
+import { isAcceptedPeopleDataLabsEvidence } from "@/lib/discovery/evidence-publishers";
 import {
   candidateSummaryGenerationSchema,
   operatorFactsGenerationSchema,
@@ -59,20 +60,14 @@ export function needsPlainLanguageRetry(
  * high-confidence, independently corroborated identity decision is required.
  */
 export function isLicensedProfileBriefEvent(event: DiscoveryEvent) {
-  if (event.source !== "people-data-labs") return false;
-  const providerVerified =
-    event.confidence >= 0.9 &&
-    event.tags?.includes("verified-provider-subject") === true;
-  const modelCorroborated =
-    event.confidence >= 0.88 &&
-    event.tags?.includes("model-corroborated-identity") === true;
-  return providerVerified || modelCorroborated;
+  return event.source === "people-data-labs" &&
+    isAcceptedPeopleDataLabsEvidence(event);
 }
 
 export function isSubstantiveBriefEvent(event: DiscoveryEvent) {
-  if (isLicensedProfileBriefEvent(event)) return true;
+  if (event.source === "people-data-labs") return isLicensedProfileBriefEvent(event);
   return event.confidence >= 0.65 &&
-    !["profile_observed", "social_graph_signal"].includes(event.type);
+    !["social_graph_signal", "identity_observed"].includes(event.type);
 }
 
 /** Evidence that can answer the first sentence of a factual 20-second pitch. */
@@ -310,7 +305,7 @@ function ordinal(value: number) {
   return `${whole}${whole % 10 === 1 ? "st" : whole % 10 === 2 ? "nd" : whole % 10 === 3 ? "rd" : "th"}`;
 }
 
-export function officialRosterBriefFacts(event: DiscoveryEvent) {
+export function officialRosterBriefFacts(event: DiscoveryEvent, sourceId = "E1") {
   if (!event.tags?.includes("manual-roster-deep-dive") || event.confidence < 0.65) return [];
   const rank = Number(event.metrics?.rank ?? 0);
   const recognition = event.tags.find((tag) => /^(?:gold|silver|bronze)$/i.test(tag));
@@ -334,14 +329,51 @@ export function officialRosterBriefFacts(event: DiscoveryEvent) {
         ? `${name} earned ${recognition.toLocaleLowerCase("en-US")} recognition.`
         : `${name} appears in the official ${eventName} results.`;
   return [
-    { text: background, sourceIds: ["E1"] },
-    { text: achievement, sourceIds: ["E1"] },
+    { text: background, sourceIds: [sourceId] },
+    { text: achievement, sourceIds: [sourceId] },
   ];
+}
+
+function licensedProfileBriefFact(event: DiscoveryEvent, sourceId: string) {
+  if (!isLicensedProfileBriefEvent(event)) return null;
+  const detail = (event.description ?? "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .map((line) => line.match(/^(?:Work history|Education|Listed skills):\s*(.+)$/i)?.[1] ?? "")
+    .map((line) => line.split(";")[0]?.trim() ?? "")
+    .find(Boolean);
+  if (!detail) return null;
+  const name = sanitizePlainText(event.person.displayName, 100);
+  return {
+    text: `People Data Labs lists ${detail} for ${name}.`,
+    sourceIds: [sourceId],
+  };
+}
+
+function rosterAndLicensedProfileBriefFacts(events: DiscoveryEvent[]) {
+  const rosterIndex = events.findIndex(
+    (event) => officialRosterBriefFacts(event).length >= 2,
+  );
+  const licensedIndex = events.findIndex(isLicensedProfileBriefEvent);
+  if (rosterIndex < 0 || licensedIndex < 0) return [];
+  const licensedFact = licensedProfileBriefFact(
+    events[licensedIndex]!,
+    `E${licensedIndex + 1}`,
+  );
+  if (!licensedFact) return [];
+  const rosterFacts = officialRosterBriefFacts(
+    events[rosterIndex]!,
+    `E${rosterIndex + 1}`,
+  );
+  return configuredBriefFactCount() <= 2
+    ? [licensedFact, rosterFacts[1]!]
+    : [licensedFact, ...rosterFacts];
 }
 
 export function usesDeterministicCandidateBrief(events: DiscoveryEvent[]) {
   const substantive = events.filter(isSubstantiveBriefEvent);
-  return supportsSingleFactBrief(events) ||
+  return rosterAndLicensedProfileBriefFacts(substantive).length >= 2 ||
+    supportsSingleFactBrief(events) ||
     (substantive.length === 1 && officialRosterBriefFacts(substantive[0]!).length >= 2);
 }
 
@@ -546,6 +578,15 @@ export async function generateCandidateBrief(
       ...eventEvidence(event),
     }));
     if (!briefEvidence.length) return reject("no-substantive-evidence");
+    const rosterAndProfileFacts = rosterAndLicensedProfileBriefFacts(selectedBriefEvents);
+    if (rosterAndProfileFacts.length >= 2) {
+      const summary = renderOperatorFacts(rosterAndProfileFacts, briefEvidence, 2);
+      if (!summary) return reject("official-roster-profile-render-contract");
+      return {
+        ...fallbackCandidateSummary(person, events, score),
+        summary,
+      };
+    }
     if (selectedBriefEvents.length === 1) {
       const rosterFacts = officialRosterBriefFacts(selectedBriefEvents[0]!);
       if (rosterFacts.length >= 2) {

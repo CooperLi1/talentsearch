@@ -123,6 +123,20 @@ test("low-confidence locator matches do not count as evidence publishers", () =>
   assert.equal(evidencePublisherCount(events), 1);
 });
 
+test("any sufficiently confident external profile site counts as a publisher", () => {
+  const events = [
+    event(1, { sourceUrl: "https://github.com/example/project" }),
+    event(2, {
+      source: "web-presence",
+      sourceUrl: "https://example.org/people/example",
+      type: "profile_observed",
+      confidence: 0.8,
+    }),
+  ];
+
+  assert.equal(evidencePublisherCount(events), 2);
+});
+
 test("operator-requested official medals retain a durable review score", () => {
   const result = scoreCandidate({
     events: [event(1, {

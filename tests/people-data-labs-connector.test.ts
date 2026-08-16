@@ -354,7 +354,7 @@ test("verified licensed profiles reach briefs; fuzzy matches stay excluded", asy
   assert.equal(isSubstantiveBriefEvent(fuzzy), false);
   const modelMatched = {
     ...base,
-    confidence: 0.89,
+    confidence: 0.8,
     tags: ["licensed-data", "model-corroborated-identity"],
   };
   assert.equal(isLicensedProfileBriefEvent(modelMatched), true);

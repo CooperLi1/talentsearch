@@ -18,6 +18,14 @@ const nonblockingBriefMigration = readFileSync(
   "utf8",
 );
 
+const profilePublisherMigration = readFileSync(
+  new URL(
+    "../supabase/migrations/20260816174834_count_profile_sites_and_repair_pdl_briefs.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
 test("IOI recovery is targeted and preserves prior enrichment successes", () => {
   assert.match(migration, /manual-roster-deep-dive/);
   assert.match(migration, /event_type = 'competition_result'/);
@@ -31,4 +39,12 @@ test("authoritative deep-dive briefs are not blocked on optional enrichment", ()
   assert.match(nonblockingBriefMigration, /brief_prompt_version is distinct from 'operator-v40'/);
   assert.doesNotMatch(nonblockingBriefMigration, /research_completed_revision/);
   assert.match(nonblockingBriefMigration, /for update of candidates skip locked/);
+});
+
+test("accepted profile sites count while unresolved PDL hypotheses stay excluded", () => {
+  assert.match(profilePublisherMigration, /manual-roster-deep-dive/);
+  assert.match(profilePublisherMigration, /model-corroborated-identity/);
+  assert.match(profilePublisherMigration, /set source_url = 'https:\/\/www\.peopledatalabs\.com\/'/);
+  assert.match(profilePublisherMigration, /set brief_generated_at = null/);
+  assert.doesNotMatch(profilePublisherMigration, /create or replace function/);
 });

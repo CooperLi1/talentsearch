@@ -17,6 +17,7 @@ import type {
 import { asNumber, asStringArray, clamp, createDiscoveryEvent } from "./shared";
 
 const ENRICH_ENDPOINT = "https://api.peopledatalabs.com/v5/person/enrich";
+const PDL_EVIDENCE_URL = "https://www.peopledatalabs.com/";
 const DEFAULT_MIN_LIKELIHOOD = 6;
 // PDL documents that name + location lookups rarely score above 4. Official
 // roster candidates still pass through exact-name and model conflict checks,
@@ -462,7 +463,9 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
                 ? `A conflicting licensed profile for ${context.person.displayName} was flagged`
                 : `A likely work history for ${context.person.displayName} was licensed for review`,
           description: describeLicensedProfile(profile) || profile.headline,
-          sourceUrl: profile.linkedInUrl ?? context.person.sourceUrl,
+          // A provider record is independently inspectable provider evidence
+          // even when PDL did not return the underlying LinkedIn member URL.
+          sourceUrl: profile.linkedInUrl ?? PDL_EVIDENCE_URL,
           person,
           tags: [
             "licensed-data",

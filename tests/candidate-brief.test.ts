@@ -86,6 +86,48 @@ test("one official ranked recognition produces two grounded decision facts", asy
   assert.equal(generated?.sources[0]?.url, ioiEvent.sourceUrl);
 });
 
+test("an accepted licensed profile adds a deterministic cited IOI brief fact", async () => {
+  const ioiEvent: DiscoveryEvent = {
+    ...event,
+    source: "roster-page",
+    sourceExternalId: "ioi-2025-rank-1",
+    sourceUrl: "https://stats.ioinformatics.org/results/2025",
+    type: "competition_result",
+    title: "Ada Example received gold recognition at IOI 2025",
+    description: "1 | Ada Example | Exampleland | 591.23 | Gold",
+    metrics: { rank: 1 },
+    tags: ["manual-roster-deep-dive", "gold"],
+    confidence: 0.66,
+    person: { ...event.person, affiliations: ["Exampleland"] },
+  };
+  const licensedProfile: DiscoveryEvent = {
+    ...event,
+    idempotencyKey: "pdl-profile",
+    source: "people-data-labs",
+    sourceExternalId: "pdl-profile",
+    sourceUrl: "https://www.peopledatalabs.com/",
+    type: "profile_observed",
+    title: "Ada Example's licensed work history was corroborated",
+    description: [
+      "Work history: Research Assistant at Example University (2024–present)",
+      "Education: Studied at Example University (2022–present)",
+    ].join("\n"),
+    tags: ["licensed-data", "model-corroborated-identity"],
+    confidence: 0.82,
+  };
+
+  const generated = await generateCandidateBrief({
+    person: ioiEvent.person,
+    events: [ioiEvent, licensedProfile],
+  });
+
+  assert.match(generated?.summary ?? "", /^- People Data Labs lists Research Assistant/);
+  assert.match(generated?.summary ?? "", /https:\/\/www\.peopledatalabs\.com\//);
+  assert.match(generated?.summary ?? "", /represented Exampleland at IOI 2025/);
+  assert.match(generated?.summary ?? "", /placed 1st overall and earned gold recognition/i);
+  assert.equal(generated?.summary.split("\n").length, 3);
+});
+
 test("brief evidence interleaves publishers before repeating one", () => {
   const githubEvents = Array.from({ length: 4 }, (_, index) => ({
     ...event,
