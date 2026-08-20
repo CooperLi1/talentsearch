@@ -321,12 +321,19 @@ export function officialRosterBriefFacts(event: DiscoveryEvent, sourceId = "E1")
   const background = affiliation
     ? `${name} represented ${affiliation} at ${eventName}.`
     : `${name} competed at ${eventName}.`;
+  const recognitionText = recognition
+    ? /\b(?:medal|olympiad|ioi|imo|ipho|icho|ibo)\b/i.test(
+        `${event.title} ${event.description ?? ""} ${event.sourceUrl}`,
+      )
+      ? `a ${recognition.toLocaleLowerCase("en-US")} medal`
+      : `${recognition.toLocaleLowerCase("en-US")} recognition`
+    : "";
   const achievement = rank > 0 && recognition
-    ? `${name} placed ${ordinal(rank)} overall and earned ${recognition.toLocaleLowerCase("en-US")} recognition.`
+    ? `${name} placed ${ordinal(rank)} overall and earned ${recognitionText}.`
     : rank > 0
       ? `${name} placed ${ordinal(rank)} overall in the official results.`
       : recognition
-        ? `${name} earned ${recognition.toLocaleLowerCase("en-US")} recognition.`
+        ? `${name} earned ${recognitionText}.`
         : `${name} appears in the official ${eventName} results.`;
   return [
     { text: background, sourceIds: [sourceId] },
@@ -351,7 +358,7 @@ function licensedProfileBriefFact(event: DiscoveryEvent, sourceId: string) {
   }
   const name = sanitizePlainText(event.person.displayName, 100);
   return {
-    text: `People Data Labs lists ${detail} for ${name}.`,
+    text: `${name}'s licensed profile lists ${detail}.`,
     sourceIds: [sourceId],
   };
 }
@@ -476,7 +483,7 @@ export function operatorBriefStructureRules(targetFactCount: number) {
       ? "- The middle facts are the most impressive things they have done: the strongest things they built, published, won, or made happen, each stated with its concrete result, adoption, or recognition. Prefer earlier supported IDs from RANKED ACHIEVEMENT EVIDENCE."
       : "- Fact 2 is the most impressive thing they have done: the strongest thing they built, published, won, or made happen, stated with its concrete result, adoption, or recognition. Prefer the earliest supported ID from RANKED ACHIEVEMENT EVIDENCE.",
     boundedFactCount >= 3
-      ? "- The final fact is the wild card: the most distinctive, surprising, or telling remaining detail — an unusual project, an odd combination of skills, early traction, or an outlier result — that a reader would remember. It must not restate the background or achievements."
+      ? "- The final fact should add a distinct decision-relevant detail, such as cross-domain work, external adoption, unusually strong performance, or a concrete constraint overcome. Omit it when the evidence adds no new assessment value. It must not restate the background or achievements."
       : "",
   ].filter(Boolean).join("\n");
 }
@@ -485,7 +492,7 @@ export function fallbackEventSummary(event: DiscoveryEvent): EventSummary {
   return {
     headline: sanitizePlainText(event.title, 160),
     summary: sanitizePlainText(event.description || event.title, 1_200),
-    whyNow: `Recorded on ${event.occurredAt.slice(0, 10)}.`,
+    whyNow: `Latest evidence was recorded on ${event.occurredAt.slice(0, 10)}; no time-sensitive change is established.`,
     signalType:
       event.type === "paper_published"
         ? "research"
@@ -534,7 +541,7 @@ export function fallbackCandidateSummary(
   return {
     headline: sanitizePlainText(person.headline || latest?.title || person.displayName, 160),
     summary: sanitizePlainText(
-      latest?.description || `${person.displayName} has ${events.length} verified public evidence event${events.length === 1 ? "" : "s"}.`,
+      latest?.description || `${person.displayName} has ${events.length} source-linked evidence item${events.length === 1 ? "" : "s"}.`,
       1_500,
     ),
     whyNow: latest

@@ -12,16 +12,7 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   other: "Other evidence",
 };
 
-export const STATUS_LABELS: Record<string, string> = {
-  new: "New",
-  watching: "Watching",
-  saved: "Shortlisted",
-  contacted: "Contacted",
-  interviewing: "Interviewing",
-  fellow: "Fellow",
-  passed: "Passed",
-  archived: "Archived",
-};
+export const STATUS_LABELS = CANDIDATE_STATUS_LABELS;
 
 export type SearchFacetCandidate = {
   characteristics?: Array<{ key: string; label: string; matched: boolean }>;
@@ -127,3 +118,4 @@ export function candidateMatchesFacet(
     candidateSet.has(clean(value).toLocaleLowerCase("en-US")),
   );
 }
+import { CANDIDATE_STATUS_LABELS } from "@/lib/candidates/status";

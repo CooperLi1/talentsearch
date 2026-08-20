@@ -13,17 +13,22 @@ export type SignalSourceView = {
   lastChecked: string | null;
   name: string;
   newCandidates: number;
-  status: "working" | "needs-attention" | "not-configured";
+  status: "working" | "needs-attention" | "not-configured" | "paused";
 };
 
 function SourceStatus({ status }: { status: SignalSourceView["status"] }) {
   if (status === "working") {
-    return <span className="source-state state-working"><CheckCircle2 aria-hidden="true" /> Working</span>;
+    return <span className="source-state state-working"><CheckCircle2 aria-hidden="true" /> Ready</span>;
   }
   if (status === "needs-attention") {
     return <span className="source-state state-attention"><AlertTriangle aria-hidden="true" /> Needs attention</span>;
   }
-  return <span className="source-state state-off"><CircleOff aria-hidden="true" /> Not configured</span>;
+  return (
+    <span className="source-state state-off">
+      <CircleOff aria-hidden="true" />
+      {status === "paused" ? "Paused" : "Setup needed"}
+    </span>
+  );
 }
 
 export function SignalsConsole({
@@ -39,7 +44,7 @@ export function SignalsConsole({
         <header className="source-toolbar">
           <div>
             <h2 id="source-overview-heading">Source coverage</h2>
-            <p>Last check, new candidates, and anything requiring attention.</p>
+            <p>See which sources are enabled, when each last succeeded, and how many candidates each added this week.</p>
           </div>
           <RunDiscoveryButton compact disabled={dataMode === "unconfigured"} />
         </header>
@@ -49,8 +54,8 @@ export function SignalsConsole({
             <div className="source-list-heading" aria-hidden="true">
               <span>Source</span>
               <span>Status</span>
-              <span>Last checked</span>
-              <span>New</span>
+              <span>Last successful run</span>
+              <span aria-label="Candidates added this week">Added</span>
             </div>
             {sources.map((source) => (
               <article className="source-row" key={source.id}>

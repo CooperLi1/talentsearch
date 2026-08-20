@@ -11,6 +11,7 @@ import {
   isCandidateIntroductionEvidence,
   isGroundedCandidateBrief,
   needsPlainLanguageRetry,
+  officialRosterBriefFacts,
   operatorBriefStructureRules,
   selectDiverseBriefEvidence,
   supportsSingleFactBrief,
@@ -81,9 +82,25 @@ test("one official ranked recognition produces two grounded decision facts", asy
     events: [ioiEvent],
   });
   assert.match(generated?.summary ?? "", /^- Ada Example represented Exampleland at IOI 2025/);
-  assert.match(generated?.summary ?? "", /placed 1st overall and earned gold recognition/i);
+  assert.match(generated?.summary ?? "", /placed 1st overall and earned a gold medal/i);
   assert.equal(generated?.summary.split("\n").length, 2);
   assert.equal(generated?.sources[0]?.url, ioiEvent.sourceUrl);
+});
+
+test("generic roster recognition is not overstated as a medal", () => {
+  const rosterEvent: DiscoveryEvent = {
+    ...event,
+    source: "roster-page",
+    sourceUrl: "https://example.com/design-awards",
+    type: "competition_result",
+    title: "Ada Example received gold recognition at Design Awards 2026",
+    description: "1 | Ada Example | Exampleland | Gold",
+    metrics: { rank: 1 },
+    tags: ["manual-roster-deep-dive", "gold"],
+    confidence: 0.66,
+  };
+  assert.match(officialRosterBriefFacts(rosterEvent)[1]?.text ?? "", /gold recognition/);
+  assert.doesNotMatch(officialRosterBriefFacts(rosterEvent)[1]?.text ?? "", /medal/);
 });
 
 test("an accepted licensed profile adds a deterministic cited IOI brief fact", async () => {
@@ -121,10 +138,10 @@ test("an accepted licensed profile adds a deterministic cited IOI brief fact", a
     events: [ioiEvent, licensedProfile],
   });
 
-  assert.match(generated?.summary ?? "", /^- People Data Labs lists Research Assistant/);
+  assert.match(generated?.summary ?? "", /^- Ada Example's licensed profile lists Research Assistant/);
   assert.match(generated?.summary ?? "", /https:\/\/www\.peopledatalabs\.com\//);
   assert.match(generated?.summary ?? "", /represented Exampleland at IOI 2025/);
-  assert.match(generated?.summary ?? "", /placed 1st overall and earned gold recognition/i);
+  assert.match(generated?.summary ?? "", /placed 1st overall and earned a gold medal/i);
   assert.equal(generated?.summary.split("\n").length, 3);
 });
 
@@ -155,7 +172,7 @@ test("licensed non-Latin roles avoid exposing garbled provider transliteration",
 
   const generated = await generateCandidateBrief({ person: roster.person, events: [roster, licensed] });
 
-  assert.match(generated?.summary ?? "", /People Data Labs lists a professional role at JASCA/);
+  assert.match(generated?.summary ?? "", /licensed profile lists a professional role at JASCA/);
   assert.doesNotMatch(generated?.summary ?? "", /yi ban she tuan/i);
 });
 
@@ -313,7 +330,7 @@ test("brief structure preserves background, achievement, and wildcard jobs", () 
   assert.match(twoFacts, /Fact 1 is the background/);
   assert.match(twoFacts, /Fact 2 is the most impressive thing/);
   assert.doesNotMatch(twoFacts, /final fact is the wild card/);
-  assert.match(threeFacts, /final fact is the wild card/);
+  assert.match(threeFacts, /final fact should add a distinct decision-relevant detail/);
   assert.match(threeFacts, /must not restate the background or achievements/);
   assert.match(fiveFacts, /middle facts are the most impressive things/);
 });

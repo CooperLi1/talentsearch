@@ -1,22 +1,19 @@
 "use client";
 
-import { Bookmark, Check, Eye, Send, X } from "lucide-react";
+import { Bookmark, Check, Eye, X } from "lucide-react";
 import { useState } from "react";
 
 const decisions = [
   { icon: Bookmark, label: "Shortlist", value: "save" },
   { icon: Eye, label: "Watch", value: "watch" },
   { icon: X, label: "Pass", value: "pass" },
-  { icon: Send, label: "Refer", value: "refer" },
 ] as const;
 
 export function CandidateActions({
   candidateId,
-  referralDisabled = false,
   status,
 }: {
   candidateId: string;
-  referralDisabled?: boolean;
   status?: string;
 }) {
   const [selected, setSelected] = useState<string | null>(() =>
@@ -53,15 +50,14 @@ export function CandidateActions({
 
   return (
     <div className="candidate-action-wrap">
-      <div className="candidate-decision-row" aria-label="Candidate decision">
+      <div className="candidate-decision-row" aria-label="Candidate decision" role="group">
         {decisions.map(({ icon: Icon, label, value }) => (
           <button
             aria-pressed={selected === value}
             className={selected === value ? "candidate-decision candidate-decision-active" : "candidate-decision"}
-            disabled={saving || (value === "refer" && referralDisabled)}
+            disabled={saving}
             key={value}
             onClick={() => decide(value)}
-            title={value === "refer" && referralDisabled ? "Verify identity and eligibility before referral" : undefined}
             type="button"
           >
             {selected === value ? <Check aria-hidden="true" /> : <Icon aria-hidden="true" />}

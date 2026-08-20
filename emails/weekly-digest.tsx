@@ -166,10 +166,10 @@ export function WeeklyDigestEmail({
             </Row>
             <Hr style={mastheadRule} />
             <Heading as="h1" style={heroHeading} className="hero-heading">
-              This week&apos;s candidates.
+              Candidates ready for review
             </Heading>
             <Text style={heroCopy}>
-              {recipientName ? `${recipientName}, here are` : "Here are"} the strongest new people in the queue.
+              {recipientName ? `${recipientName}, here are` : "Here are"} the highest-priority candidates that met the current review criteria.
             </Text>
           </Section>
 
@@ -188,10 +188,10 @@ export function WeeklyDigestEmail({
             <Section style={actionPanel}>
               <Text style={actionKicker}>In the dashboard</Text>
               <Heading as="h2" style={actionHeading}>
-                Review the full records.
+                Review evidence and decide next steps
               </Heading>
               <Text style={actionCopy}>
-                Open a dossier for sources, identity notes, and contact routes.
+                Open each record to inspect sources, identity notes, and available contact routes.
               </Text>
               <Button href={safeDashboardUrl} style={dashboardButton}>
                 Open the review queue
@@ -203,7 +203,7 @@ export function WeeklyDigestEmail({
             <Text style={footerBrand}>UNFOUND</Text>
             <Text style={footerTagline}>Internal use only.</Text>
             <Text style={footerText}>
-              Built from public sources. Verify identity and context before outreach,
+              Built from public and licensed sources. Confirm identity and context before outreach,
               especially when a candidate may be under 18.
             </Text>
           </Section>

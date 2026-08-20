@@ -10,19 +10,10 @@ import { getDashboardData } from "@/lib/data/talent-radar";
 import type { Candidate } from "@/lib/domain/types";
 
 function toDashboardCandidate(candidate: Candidate): DashboardCandidateView {
-  const unresolvedIdentity = candidate.identities.find(
-    (identity) => identity.resolutionStatus !== "resolved",
-  );
-
   return {
     facts: buildOperatorBrief(candidate),
     id: candidate.id,
     name: candidate.name,
-    referralDisabled:
-      Boolean(unresolvedIdentity) ||
-      candidate.confidence < 0.72 ||
-      candidate.sourceCount < 2 ||
-      /high.?school|minor/i.test(candidate.stage),
     slug: candidate.slug,
     status: candidate.status,
   };

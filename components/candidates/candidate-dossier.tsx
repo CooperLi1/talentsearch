@@ -1,5 +1,6 @@
 import { CandidateActions } from "@/components/candidates/candidate-actions";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { candidateStatusLabel } from "@/lib/candidates/status";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -51,7 +52,6 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
     candidate.confidence < 0.72 ||
     candidate.identities.some((identity) => identity.status !== "resolved");
   const eligibilityNeedsReview = /high.?school|minor/i.test(candidate.stage);
-  const referralDisabled = identityNeedsReview || eligibilityNeedsReview;
   const latestEvent = candidate.events[0];
 
   return (
@@ -63,7 +63,7 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
           </div>
           <div>
             <span className={`status-token status-${candidate.status}`}>
-              {candidate.status}
+              {candidateStatusLabel(candidate.status)}
             </span>
             <p>Last checked {candidate.lastSeenAt}</p>
           </div>
@@ -82,13 +82,13 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
             </div>
             <div className="dossier-score">
               <strong>{candidate.score.toFixed(1)}</strong>
-              <small>Review score</small>
+              <small>Criteria score</small>
               <span>{Math.round(candidate.confidence * 100)}% identity confidence</span>
             </div>
           </div>
 
           <div className="dossier-latest-evidence">
-            <span>Latest verified change</span>
+            <span>Latest evidence</span>
             {latestEvent ? (
               <a href={latestEvent.url} rel="noreferrer" target="_blank">
                 <strong>{latestEvent.title}</strong>
@@ -106,11 +106,11 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
         <div className="dossier-guard" role="status">
           <AlertTriangle aria-hidden="true" />
           <div>
-            <strong>Referral is paused.</strong>
+            <strong>Identity or eligibility needs review.</strong>
             <span>
               {identityNeedsReview
-                ? "Resolve the identity check before outreach or referral."
-                : "Confirm eligibility and the appropriate contact path before outreach."}
+                ? "Confirm the identity and supporting evidence before any outreach."
+                : "Confirm eligibility and the appropriate contact path before any outreach."}
             </span>
           </div>
         </div>
@@ -120,7 +120,6 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
         <aside className="dossier-aside">
           <CandidateActions
             candidateId={candidate.id}
-            referralDisabled={referralDisabled}
             status={candidate.status}
           />
 
@@ -133,7 +132,7 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
                     <a
                       href={route.url}
                       rel="noreferrer"
-                      title={`Verified on ${route.provenanceUrl}`}
+                      title={`Source: ${route.provenanceUrl}`}
                       target={route.url.startsWith("mailto:") ? undefined : "_blank"}
                     >
                       <span>{route.label}</span>
@@ -163,7 +162,15 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
                         )}
                         {identity.label}
                       </span>
-                      <small>{identity.status}</small>
+                      <small>{
+                        identity.status === "resolved"
+                          ? "Confirmed match"
+                          : identity.status === "ambiguous"
+                            ? "Needs review"
+                            : identity.status === "rejected"
+                              ? "Rejected"
+                              : "Unconfirmed"
+                      }</small>
                       <ExternalLink aria-hidden="true" />
                     </a>
                   </li>
@@ -189,15 +196,15 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
         <div className="dossier-main">
           <div className="dossier-brief-grid">
             <section className="evidence-brief">
-              <p className="eyebrow">Review thesis</p>
+              <p className="eyebrow">Why this person</p>
               <MessageResponse className="prose">{candidate.summaryMarkdown}</MessageResponse>
             </section>
             <section className="evidence-brief dossier-why-now">
-              <p className="eyebrow">Why now</p>
+              <p className="eyebrow">Recent evidence</p>
               <MessageResponse className="prose">{candidate.whyNowMarkdown}</MessageResponse>
             </section>
             <section className="evidence-brief dossier-earlyness">
-              <p className="eyebrow">Current recognition</p>
+              <p className="eyebrow">Low-visibility estimate</p>
               <MessageResponse className="prose">{candidate.earlynessMarkdown}</MessageResponse>
             </section>
           </div>
@@ -206,9 +213,9 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
             <div className="timeline-heading-row">
               <div>
                 <p className="eyebrow">Evidence timeline</p>
-                <h2 className="dossier-section-title" id="timeline-heading">What changed</h2>
+                <h2 className="dossier-section-title" id="timeline-heading">Source history</h2>
               </div>
-              <span>{candidate.events.length} verified {candidate.events.length === 1 ? "event" : "events"}</span>
+              <span>{candidate.events.length} evidence {candidate.events.length === 1 ? "item" : "items"}</span>
             </div>
 
             {candidate.events.length ? candidate.events.map((event) => (
@@ -218,7 +225,7 @@ export function CandidateDossier({ candidate }: { candidate: CandidateDossierVie
                 <div>
                   <h3>{event.title}</h3>
                   <p>{event.description}</p>
-                  <small>{Math.round(event.confidence * 100)}% evidence confidence</small>
+                  <small>{Math.round(event.confidence * 100)}% confidence</small>
                 </div>
                 <a href={event.url} rel="noreferrer" target="_blank" aria-label={`Open source for ${event.title}`}>
                   <ArrowUpRight aria-hidden="true" />

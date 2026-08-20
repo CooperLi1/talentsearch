@@ -3,6 +3,7 @@
 import { CandidateActions } from "@/components/candidates/candidate-actions";
 import { SiteNav } from "@/components/site-nav";
 import type { OperatorBriefFact } from "@/lib/candidates/operator-brief";
+import { candidateStatusLabel } from "@/lib/candidates/status";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import {
@@ -19,7 +20,6 @@ export type DashboardCandidateView = {
   facts: OperatorBriefFact[];
   id: string;
   name: string;
-  referralDisabled: boolean;
   slug: string;
   status: string;
 };
@@ -33,7 +33,7 @@ function QueueRow({ candidate, rank }: { candidate: DashboardCandidateView; rank
         <div className="queue-name-line">
           <h2><Link href={`/people/${candidate.slug}`}>{candidate.name}</Link></h2>
           <span className={`status-token status-${candidate.status}`}>
-            {candidate.status}
+            {candidateStatusLabel(candidate.status)}
           </span>
         </div>
       </div>
@@ -58,7 +58,6 @@ function QueueRow({ candidate, rank }: { candidate: DashboardCandidateView; rank
       <div className="queue-actions">
         <CandidateActions
           candidateId={candidate.id}
-          referralDisabled={candidate.referralDisabled}
           status={candidate.status}
         />
         <Link className="queue-open" href={`/people/${candidate.slug}`}>
@@ -117,10 +116,11 @@ export function Dashboard({
       <div className="content-frame operator-shell">
         <header className="operator-header">
           <div>
-            <p className="eyebrow">Weekly review</p>
+            <p className="eyebrow">Ready for review</p>
             <h1>Candidate queue</h1>
             <p>
-              The strongest recently discovered people, ordered for review.
+              Candidates that meet your current evidence and fit criteria,
+              ranked for review.
             </p>
           </div>
           <div className="operator-header-actions">
@@ -133,7 +133,7 @@ export function Dashboard({
         <section className="review-queue" id="candidates" aria-labelledby="queue-heading">
           <header className="queue-toolbar">
             <div>
-              <h2 id="queue-heading">Review in order</h2>
+              <h2 id="queue-heading">Priority order</h2>
               <span>{candidates.length ? `${candidates.length} ${candidates.length === 1 ? "person" : "people"}` : "No candidates waiting"}</span>
             </div>
             <Link href="/settings">
@@ -171,10 +171,10 @@ export function Dashboard({
                 <CheckCircle2 aria-hidden="true" />
               </div>
               <div>
-                <h2>No candidates are waiting.</h2>
+                <h2>No candidates currently meet the review criteria.</h2>
                 <p>
-                  Run discovery to look for new evidence, or broaden the criteria if
-                  the current cutoff is too selective.
+                  Check Search for profiles still being researched, run another
+                  source check, or adjust the cutoff.
                 </p>
               </div>
               <div className="empty-state-actions">

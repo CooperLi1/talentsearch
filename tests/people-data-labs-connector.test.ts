@@ -6,9 +6,11 @@ import { createConnectorRegistry } from "../lib/discovery/connectors";
 import {
   licensedFuzzyLookupAnchor,
   isGroundedRosterLicensedMatch,
+  isResolvedExactLinkedInMatch,
   namesRoughlyMatch,
   parseLicensedProfile,
   PeopleDataLabsConnector,
+  selectLinkedInIdentityForLookup,
   shouldBindLicensedProfileIdentity,
 } from "../lib/discovery/connectors/people-data-labs";
 import type { ConnectorEnrichmentContext } from "../lib/discovery/types";
@@ -326,6 +328,90 @@ test("licensed LinkedIn identities bind only after exact or model-accepted match
   assert.equal(shouldBindLicensedProfileIdentity(false, "match"), true);
   assert.equal(shouldBindLicensedProfileIdentity(false, "review"), false);
   assert.equal(shouldBindLicensedProfileIdentity(false, "reject"), false);
+});
+
+test("only a resolved, name-consistent LinkedIn identity takes the exact PDL shortcut", () => {
+  const identity = {
+    provider: "linkedin-manual" as const,
+    externalId: "reviewed-person",
+    profileUrl: "https://www.linkedin.com/in/reviewed-person",
+  };
+  const match = {
+    identity,
+    requestedName: "Reviewed Person",
+    returnedName: "Reviewed Person",
+    returnedUrl: "https://linkedin.com/in/reviewed-person/",
+  };
+
+  assert.equal(isResolvedExactLinkedInMatch(match), false);
+  assert.equal(
+    isResolvedExactLinkedInMatch({ ...match, identity: { ...identity, verified: true } }),
+    true,
+  );
+  assert.equal(
+    isResolvedExactLinkedInMatch({
+      ...match,
+      identity: { ...identity, verified: true },
+      returnedName: "Somebody Else",
+    }),
+    false,
+  );
+  assert.equal(
+    isResolvedExactLinkedInMatch({
+      ...match,
+      alternateNames: ["Reviewed Person"],
+      identity: { ...identity, verified: true },
+      requestedName: "Reviewed P. Example",
+    }),
+    true,
+  );
+});
+
+test("PDL lookup prefers a resolved LinkedIn identity over an earlier search hypothesis", () => {
+  const unresolved = {
+    provider: "linkedin-manual" as const,
+    externalId: "wrong",
+    profileUrl: "https://www.linkedin.com/in/wrong-person",
+    verified: false,
+  };
+  const resolved = {
+    provider: "linkedin-manual" as const,
+    externalId: "reviewed",
+    profileUrl: "https://www.linkedin.com/in/reviewed-person",
+    verified: true,
+  };
+  assert.equal(selectLinkedInIdentityForLookup([unresolved, resolved]), resolved);
+});
+
+test("PDL never binds a different returned name even when the LinkedIn URL matches", async () => {
+  const previousKey = process.env.PEOPLE_DATA_SEARCH_KEY;
+  process.env.PEOPLE_DATA_SEARCH_KEY = "test-key";
+  const connector = new PeopleDataLabsConnector(async () => new Response(JSON.stringify({
+    likelihood: 10,
+    data: {
+      full_name: "Somebody Else",
+      linkedin_url: "https://www.linkedin.com/in/reviewed-person",
+      job_title: "Robotics Engineer",
+    },
+  }), { status: 200 }));
+  try {
+    const context = enrichmentContext();
+    context.person = {
+      ...context.person,
+      identities: [{
+        provider: "linkedin-manual",
+        externalId: "reviewed-person",
+        profileUrl: "https://www.linkedin.com/in/reviewed-person",
+        verified: true,
+      }],
+    };
+    const result = await connector.enrich(context);
+    assert.deepEqual(result?.events, []);
+    assert.match(result?.warnings?.[0] ?? "", /returned name did not correspond/i);
+  } finally {
+    if (previousKey === undefined) delete process.env.PEOPLE_DATA_SEARCH_KEY;
+    else process.env.PEOPLE_DATA_SEARCH_KEY = previousKey;
+  }
 });
 
 test("verified licensed profiles reach briefs; fuzzy matches stay excluded", async () => {

@@ -1,13 +1,14 @@
 "use client";
 
 import { CandidateActions } from "@/components/candidates/candidate-actions";
+import { candidateStatusLabel } from "@/lib/candidates/status";
 import type { PeopleCandidateView } from "@/lib/candidates/people-view";
 import {
   buildSearchFacetOptions,
   candidateMatchesFacet,
   type SearchFacetOption,
 } from "@/lib/search/facets";
-import { ArrowUpRight, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 
@@ -74,6 +75,7 @@ export function PeopleSearch({
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [selected, setSelected] = useState<SelectedFacets>(EMPTY_FACETS);
   const [searching, setSearching] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [remoteResults, setRemoteResults] = useState<PeopleCandidateView[] | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [sort, setSort] = useState<
@@ -145,6 +147,13 @@ export function PeopleSearch({
     }));
   }
 
+  function clearSearch() {
+    setQuery("");
+    setSubmittedQuery("");
+    setRemoteResults(null);
+    setSearchError(null);
+  }
+
   async function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmittedQuery(query);
@@ -189,12 +198,25 @@ export function PeopleSearch({
 
   return (
     <div className="people-workbench">
-      <aside className="people-filters">
+      <aside className={`people-filters${filtersOpen ? " people-filters-open" : ""}`}>
         <div className="filter-heading">
-          <SlidersHorizontal aria-hidden="true" />
-          <span>Filters</span>
+          <div className="filter-heading-label">
+            <SlidersHorizontal aria-hidden="true" />
+            <span>Filters{selectedCount ? ` · ${selectedCount}` : ""}</span>
+          </div>
+          <button
+            aria-expanded={filtersOpen}
+            className="filter-toggle"
+            onClick={() => setFiltersOpen((current) => !current)}
+            type="button"
+          >
+            <SlidersHorizontal aria-hidden="true" />
+            <span>Filters{selectedCount ? ` · ${selectedCount}` : ""}</span>
+            <ChevronDown aria-hidden="true" />
+          </button>
           {selectedCount > 0 && (
             <button
+              className="filter-clear"
               onClick={() => {
                 setSelected(EMPTY_FACETS);
               }}
@@ -204,14 +226,15 @@ export function PeopleSearch({
             </button>
           )}
         </div>
-
-        <FilterGroup options={facets.eventTypes} selected={selected.eventTypes} title="Signal" onToggle={(value) => toggleValue("eventTypes", value)} />
-        <FilterGroup options={facets.characteristics} selected={selected.characteristics} title="Characteristic" onToggle={(value) => toggleValue("characteristics", value)} />
-        <FilterGroup options={facets.sources} selected={selected.sources} title="Source" onToggle={(value) => toggleValue("sources", value)} />
-        <FilterGroup options={facets.domains} selected={selected.domains} title="Focus area" onToggle={(value) => toggleValue("domains", value)} />
-        <FilterGroup options={facets.stages} selected={selected.stages} title="Stage" onToggle={(value) => toggleValue("stages", value)} />
-        <FilterGroup options={facets.locations} selected={selected.locations} title="Location" onToggle={(value) => toggleValue("locations", value)} />
-        <FilterGroup options={facets.statuses} selected={selected.statuses} title="Review status" onToggle={(value) => toggleValue("statuses", value)} />
+        <div className="people-filter-groups">
+          <FilterGroup options={facets.eventTypes} selected={selected.eventTypes} title="Signal" onToggle={(value) => toggleValue("eventTypes", value)} />
+          <FilterGroup options={facets.characteristics} selected={selected.characteristics} title="Characteristic" onToggle={(value) => toggleValue("characteristics", value)} />
+          <FilterGroup options={facets.sources} selected={selected.sources} title="Source" onToggle={(value) => toggleValue("sources", value)} />
+          <FilterGroup options={facets.domains} selected={selected.domains} title="Focus area" onToggle={(value) => toggleValue("domains", value)} />
+          <FilterGroup options={facets.stages} selected={selected.stages} title="Stage" onToggle={(value) => toggleValue("stages", value)} />
+          <FilterGroup options={facets.locations} selected={selected.locations} title="Location" onToggle={(value) => toggleValue("locations", value)} />
+          <FilterGroup options={facets.statuses} selected={selected.statuses} title="Review status" onToggle={(value) => toggleValue("statuses", value)} />
+        </div>
       </aside>
 
       <section className="people-main" aria-label="People search results">
@@ -235,7 +258,17 @@ export function PeopleSearch({
         {searchError ? <p className="people-search-error" role="status">{searchError}</p> : null}
 
         <div className="people-status">
-          <span>{results.length} {results.length === 1 ? "person" : "people"}</span>
+          <div className="people-status-summary">
+            <span>{results.length} {results.length === 1 ? "person" : "people"}</span>
+            {submittedQuery ? (
+              <span className="people-query-state">
+                Results for “{submittedQuery}”
+                <button aria-label="Clear search" onClick={clearSearch} type="button">
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            ) : null}
+          </div>
           <label className="people-sort">
             <span>Sort</span>
             <select
@@ -251,10 +284,10 @@ export function PeopleSearch({
               }
               value={sort}
             >
-              <option value="score">Review score</option>
-              <option value="activity">Activity volume</option>
-              <option value="recent">Newest activity</option>
-              <option value="undiscovered">Most undiscovered</option>
+              <option value="score">Criteria score</option>
+              <option value="activity">Most research activity</option>
+              <option value="recent">Most recent evidence</option>
+              <option value="undiscovered">Lowest public visibility</option>
             </select>
           </label>
         </div>
@@ -270,7 +303,7 @@ export function PeopleSearch({
                   <div className="queue-name-line">
                     <Link href={`/people/${candidate.slug}`}>{candidate.name}</Link>
                     <span className={`status-token status-${candidate.status}`}>
-                      {candidate.status}
+                      {candidateStatusLabel(candidate.status)}
                     </span>
                   </div>
                   <p>
@@ -296,7 +329,7 @@ export function PeopleSearch({
                     </ul>
                   ) : (
                     <p className="person-brief-pending">
-                      Source-linked brief pending. Run discovery to prepare it.
+                      Research brief is still being prepared.
                     </p>
                   )}
                   {candidate.identityWarning ? (
@@ -325,15 +358,14 @@ export function PeopleSearch({
                 </div>
                 <div className="person-result-score">
                   <strong>{candidate.score.toFixed(1)}</strong>
-                  <small>Review score</small>
-                  <span>Activity {Math.round(candidate.activityScore * 100)}</span>
-                  <span>Recognition {Math.round(candidate.recognitionScore * 100)}</span>
+                  <small>Criteria score</small>
+                  <span>Research activity {Math.round(candidate.activityScore * 100)}/100</span>
+                  <span>Public visibility {Math.round(candidate.recognitionScore * 100)}/100</span>
                   <span>Identity confidence {Math.round(candidate.confidence * 100)}%</span>
                 </div>
                 <div className="person-result-actions">
                   <CandidateActions
                     candidateId={candidate.id}
-                    referralDisabled={Boolean(candidate.identityWarning) || /high.?school|minor/i.test(candidate.stage)}
                     status={candidate.status}
                   />
                   <Link aria-label={`Open ${candidate.name}`} href={`/people/${candidate.slug}`}>

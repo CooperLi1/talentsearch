@@ -15,10 +15,10 @@ export default function DeepDivesPage() {
         <header className="operator-header operator-header-compact">
           <div>
             <p className="eyebrow">Manual research</p>
-            <h1>Page deep dives</h1>
+            <h1>Research a roster</h1>
             <p>
-              Turn a public roster into a queued, cross-source candidate
-              investigation.
+              Import names from a public results or roster page, then check each
+              person across the enabled sources.
             </p>
           </div>
         </header>

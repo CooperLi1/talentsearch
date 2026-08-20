@@ -15,19 +15,31 @@ type DeepDiveResult = {
   warnings: Array<{ message: string; source: string }>;
 };
 
+function warningSourceLabel(source: string) {
+  return source
+    .split("-")
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toLocaleUpperCase("en-US") ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
 export function DeepDiveConsole({
   disabled,
 }: {
   disabled: boolean;
 }) {
-  const [url, setUrl] = useState(
-    "https://stats.ioinformatics.org/results/2025",
-  );
-  const [maxPeople, setMaxPeople] = useState("500");
+  const [url, setUrl] = useState("");
+  const [maxPeople, setMaxPeople] = useState("100");
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DeepDiveResult | null>(null);
+  const warnings = result
+    ? [...new Map(result.warnings.map((warning) => [
+        `${warning.source}:${warning.message}`,
+        warning,
+      ])).values()]
+    : [];
 
   async function runDeepDive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,11 +110,11 @@ export function DeepDiveConsole({
             <Users aria-hidden="true" />
           </span>
           <div>
-            <h2>Research every name on a page</h2>
+            <h2>Research people from a public page</h2>
             <p>
-              Import a public results or roster page. Every detected person is
-              added to the research queue for GitHub, Hacker News, public web,
-              licensed work history, and configured social enrichment.
+              Each detected person is added to the research queue. Enabled
+              profile, publication, code, and web sources are checked in the
+              background, subject to identity checks and provider limits.
             </p>
           </div>
         </div>
@@ -142,18 +154,19 @@ export function DeepDiveConsole({
             <Search aria-hidden="true" />
             {running
               ? `Importing${progress ? ` · ${progress} names` : ""}`
-              : "Start deep dive"}
+              : "Import and research"}
           </button>
         </form>
         <p className="deep-dive-note">
-          The import is immediate. Deep research continues in the enrichment
-          worker so large rosters do not have to finish inside one web request.
+          Names are imported in batches. Additional research continues in the
+          background after the import finishes. A lower limit conserves paid
+          provider credits; the maximum is 500.
         </p>
       </section>
 
       {error ? (
         <div className="deep-dive-result deep-dive-result-error" role="alert">
-          <strong>Deep dive could not start</strong>
+          <strong>Research could not start</strong>
           <p>{error}</p>
         </div>
       ) : null}
@@ -173,9 +186,27 @@ export function DeepDiveConsole({
             <strong>{result.candidatesUpdated}</strong>
           </div>
           <p>
-            {result.namesQueued} names are queued for deeper research. Run{" "}
-            <span>{result.runId}</span>
+            {result.namesQueued} people are queued for additional research.
           </p>
+          {warnings.length ? (
+            <div className="deep-dive-warnings" role="status">
+              <strong>Some research needs attention</strong>
+              <ul>
+                {warnings.slice(0, 3).map((warning) => (
+                  <li key={`${warning.source}:${warning.message}`}>
+                    <span>{warningSourceLabel(warning.source)}</span> · {warning.message}
+                  </li>
+                ))}
+              </ul>
+              {warnings.length > 3 ? (
+                <small>{warnings.length - 3} more warning{warnings.length - 3 === 1 ? "" : "s"} in this run.</small>
+              ) : null}
+            </div>
+          ) : null}
+          <details className="deep-dive-technical">
+            <summary>Technical details</summary>
+            <span>Run {result.runId}</span>
+          </details>
           <Link href="/people">
             Review imported people <ArrowUpRight aria-hidden="true" />
           </Link>

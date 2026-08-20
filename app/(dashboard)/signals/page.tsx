@@ -31,9 +31,11 @@ function toSource(source: DiscoverySource): SignalSourceView {
     name: source.name,
     newCandidates: source.discoveredThisWeek,
     status:
-      source.status === "degraded"
-        ? "needs-attention"
-        : source.enabled && source.status === "active"
+      !source.enabled
+        ? "paused"
+        : source.status === "degraded"
+          ? "needs-attention"
+          : source.status === "active"
           ? "working"
           : "not-configured",
   };

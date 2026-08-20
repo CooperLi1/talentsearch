@@ -12,6 +12,7 @@ import type {
   ConnectorEnrichmentContext,
   ConnectorRunResult,
   DiscoveryConnector,
+  ExternalIdentity,
   PersonObservation,
 } from "../types";
 import { asNumber, asStringArray, clamp, createDiscoveryEvent } from "./shared";
@@ -132,6 +133,30 @@ export function namesRoughlyMatch(left: string, right: string) {
   if (!leftTokens.length || !rightTokens.size) return false;
   const shared = leftTokens.filter((token) => rightTokens.has(token)).length;
   return shared >= Math.min(2, leftTokens.length);
+}
+
+export function isResolvedExactLinkedInMatch(input: {
+  alternateNames?: string[];
+  identity?: ExternalIdentity;
+  requestedName: string;
+  returnedName: string;
+  returnedUrl?: string | null;
+}) {
+  const requestedUrl = normalizeLinkedInMemberUrl(input.identity?.profileUrl);
+  return input.identity?.verified === true &&
+    Boolean(requestedUrl) &&
+    requestedUrl === normalizeLinkedInMemberUrl(input.returnedUrl) &&
+    [input.requestedName, ...(input.alternateNames ?? [])].some((name) =>
+      namesRoughlyMatch(input.returnedName, name)
+    );
+}
+
+export function selectLinkedInIdentityForLookup(identities: ExternalIdentity[]) {
+  const withLinkedInUrl = identities.filter((identity) =>
+    Boolean(normalizeLinkedInMemberUrl(identity.profileUrl))
+  );
+  return withLinkedInUrl.find((identity) => identity.verified === true) ??
+    withLinkedInUrl[0];
 }
 
 function normalizedHumanName(value: string) {
@@ -261,10 +286,12 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
     );
     if (alreadyLicensed) return null;
 
-    const linkedInUrl =
-      context.person.identities
-        .map((identity) => normalizeLinkedInMemberUrl(identity.profileUrl))
-        .find((value): value is string => Boolean(value)) ?? null;
+    const requestedLinkedInIdentity = selectLinkedInIdentityForLookup(
+      context.person.identities,
+    );
+    const linkedInUrl = requestedLinkedInIdentity
+      ? normalizeLinkedInMemberUrl(requestedLinkedInIdentity.profileUrl)
+      : null;
     const name = sanitizePlainText(context.person.displayName, 200);
     const fuzzyAnchor = licensedFuzzyLookupAnchor(
       context.person,
@@ -340,7 +367,19 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
         warnings: ["The licensed profile response did not match the requested LinkedIn member URL."],
       };
     }
-    const exact = Boolean(linkedInUrl && profile.linkedInUrl === linkedInUrl);
+    const trustedAlternateNames = (context.person.alternateNames ?? [])
+      .filter((alternate) => alternate.confidence >= 0.7)
+      .map((alternate) => alternate.name);
+    const nameCorresponds = [name, ...trustedAlternateNames].some((knownName) =>
+      namesRoughlyMatch(profile.fullName, knownName)
+    );
+    const exact = isResolvedExactLinkedInMatch({
+      alternateNames: trustedAlternateNames,
+      identity: requestedLinkedInIdentity,
+      requestedName: name,
+      returnedName: profile.fullName,
+      returnedUrl: profile.linkedInUrl,
+    });
     let modelReview: IdentityMatchDecision | null = null;
     if (!exact) {
       modelReview = await reviewIdentityEvidenceMatch({
@@ -355,7 +394,7 @@ export class PeopleDataLabsConnector implements DiscoveryConnector {
         signal: context.signal,
       });
     }
-    if (!exact && !modelReview && !namesRoughlyMatch(profile.fullName, name)) {
+    if (!nameCorresponds && modelReview?.decision !== "match") {
       return {
         events: [],
         warnings: [`A licensed match for ${name} was discarded because the returned name did not correspond.`],
